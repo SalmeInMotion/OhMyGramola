@@ -1,8 +1,8 @@
-# OhMyGramola (`v1.1.0`)
+# OhMyGramola (`v1.2.0`)
 
 **Royalty-Free & Creative Commons Music Browser, Live Waveform Trimmer, and One-Click Importer for Adobe After Effects.**
 
-![Version](https://img.shields.io/badge/version-1.1.0-d8ff42?style=flat-square&labelColor=1d2026)
+![Version](https://img.shields.io/badge/version-1.2.0-d8ff42?style=flat-square&labelColor=1d2026)
 ![After Effects](https://img.shields.io/badge/After%20Effects-2020%20--%202026%2B-398dc2?style=flat-square&labelColor=1d2026)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-242832?style=flat-square&labelColor=1d2026)
 ![License](https://img.shields.io/badge/license-MIT-949cab?style=flat-square&labelColor=1d2026)
@@ -21,9 +21,9 @@
   - **Merge Online Libraries**: Optional toggle in Settings (`⚙`) to search Kevin MacLeod + Jamendo together in a single tab.
 - **Instant Streaming & Firewall-Proof Companion Broker**
   - Streams remote tracks via HTTP Range requests (~300ms time-to-first-byte) through a lightweight local `node.exe` companion process—even if `AfterFX.exe` is blocked by Windows Firewall.
-- **Live Symmetrical Waveform & Sample-Accurate In/Out Trimming**
+- **Live Symmetrical Waveform & Non-Destructive Pre-Comp Trimming**
   - Draws a smooth mirrored envelope waveform progressively as you listen.
-  - Drag across the waveform (or press `I` and `O`) to select a section, then click **`Import Trim`** to generate a click-free (`8ms` micro-faded) trimmed clip and place it straight at your After Effects composition CTI.
+  - Drag across the waveform (or press `I` and `O`) to select a section, then click **`Import Trim`**: OhMyGramola imports the **complete master audio**, builds a trimmed After Effects composition (`<Track> [Trim ...]`) around the full file, and places it at your active composition playhead—so you can always open the pre-comp later and recover any part of the song.
 - **Automatic YouTube Credits**
   - Saves a `<Track>_attribution.txt` file alongside downloaded tracks and copies formatted credits to the Windows clipboard in one click.
 
@@ -47,7 +47,7 @@ When the **OhMyGramola** panel has focus:
 
 ## 🖥️ Supported After Effects Versions & System Requirements
 
-**OhMyGramola (`v1.1.0`)** works across all modern Creative Cloud releases of **Adobe After Effects on Windows 10 / 11** (`CSXS 9.0+`, host range `AEFT [17.0, 99.9]`):
+**OhMyGramola (`v1.2.0`)** works across all modern Creative Cloud releases of **Adobe After Effects on Windows 10 / 11** (`CSXS 9.0+`, host range `AEFT [17.0, 99.9]`):
 
 | Adobe After Effects Version | Internal Host (`AEFT`) | CEP / CSXS Runtime | Status |
 | :--- | :--- | :--- | :--- |
@@ -63,13 +63,13 @@ When the **OhMyGramola** panel has focus:
 
 ### External Companion Tools
 - **[Node.js LTS](https://nodejs.org/)** *(Required for live online streaming & Jamendo API proxy — runs a silent local companion process so online playback works even when `AfterFX.exe` is blocked by Windows Firewall)*.
-- **[FFmpeg](https://www.gyan.dev/ffmpeg/builds/)** *(Recommended — enables progressive waveform extraction while streaming non-Jamendo tracks and exports sample-accurate, click-free trimmed `.mp3`/`.wav` clips on disk. If FFmpeg is not installed, OhMyGramola gracefully falls back to WebAudio live visualization and non-destructive After Effects timeline layer trimming).*
+- **[FFmpeg](https://www.gyan.dev/ffmpeg/builds/)** *(Optional / Recommended — enables progressive waveform extraction while streaming non-Jamendo tracks. If FFmpeg is not installed, OhMyGramola gracefully falls back to WebAudio live visualization; In/Out trimming works natively inside After Effects without FFmpeg).*
 
 ---
 
 ## 🚀 Installation (Windows)
 
-1. Download **`OhMyGramola-v1.1.0-Setup.zip`** from [**Releases**](https://github.com/SalmeInMotion/OhMyGramola/releases) (or clone this repository) and extract it anywhere.
+1. Download **`OhMyGramola-v1.2.0-Setup.zip`** from [**Releases**](https://github.com/SalmeInMotion/OhMyGramola/releases) (or clone this repository) and extract it anywhere.
 2. Double-click **`Install-OhMyGramola.cmd`**.
 3. In the **OhMyGramola Setup** window:
    - Choose which **After Effects versions** to enable (installed versions are auto-detected; *All compatible & future versions* is enabled by default).

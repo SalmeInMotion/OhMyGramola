@@ -6,7 +6,7 @@
 (function () {
   "use strict";
 
-  const APP_VERSION = "1.1.0";
+  const APP_VERSION = "1.2.0";
   window.OHMYGRAMOLA_VERSION = APP_VERSION;
 
   // Optically matched Play & Pause SVGs (exact same 15-unit vertical span y=4.5..19.5, zero OS emoji styling)
@@ -646,11 +646,11 @@
 
     try {
       let finalAudioPath = track.localPath;
-      let trimmedOnDisk = false;
 
-      // Use broker whenever downloading OR whenever trimming is requested
-      if (!finalAudioPath || trim) {
-        showToast(trim ? "Preparing trimmed audio for After Effects..." : "Downloading track to P:\\IA\\RRSS\\Music...");
+      // Download full master audio to local library only if not already on disk
+      if (!finalAudioPath) {
+        const targetDir = window.LocalLibraryProvider.getLibraryPath();
+        showToast(`Downloading full track to ${targetDir}...`);
 
         if (!window.BrokerClient) {
           throw new Error("Broker client unavailable.");
@@ -662,12 +662,9 @@
 
         const importRes = await window.BrokerClient.importTrack({
           track: track,
-          targetDir: window.LocalLibraryProvider.getLibraryPath(),
-          trimIn: trim ? trim.trimIn : null,
-          trimOut: trim ? trim.trimOut : null
+          targetDir: targetDir
         });
-        finalAudioPath = importRes.path;
-        trimmedOnDisk = Boolean(importRes.trimmedOnDisk);
+        finalAudioPath = importRes.masterPath || importRes.path;
 
         if (window.LocalLibraryProvider && typeof window.LocalLibraryProvider.invalidateCache === "function") {
           window.LocalLibraryProvider.invalidateCache();
@@ -679,17 +676,16 @@
         await copyToClipboard(track.attribution);
       }
 
-      showToast("Importing into After Effects project...");
+      showToast(trim ? "Creating trimmed pre-comp with full audio in After Effects..." : "Importing into After Effects project...");
       const result = await window.AEBridge.importAudio(finalAudioPath, true, {
         trimIn: trim ? trim.trimIn : null,
-        trimOut: trim ? trim.trimOut : null,
-        trimmedOnDisk: trimmedOnDisk
+        trimOut: trim ? trim.trimOut : null
       });
 
       if (result && result.ok) {
         if (trim) {
           const dur = (trim.trimOut - trim.trimIn).toFixed(1);
-          showToast(`✓ Trimmed clip (${dur}s) imported to AE & credits copied!`);
+          showToast(`✓ Full track imported inside "${result.compName || "Trim Comp"}" (${dur}s) & credits copied!`);
         } else {
           showToast("✓ Track imported to AE & credits copied to clipboard!");
         }

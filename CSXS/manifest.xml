@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<ExtensionManifest Version="7.0" ExtensionBundleId="com.salmeinmotion.free-royalties-music" ExtensionBundleVersion="1.1.0" ExtensionBundleName="OhMyGramola">
+<ExtensionManifest Version="7.0" ExtensionBundleId="com.salmeinmotion.free-royalties-music" ExtensionBundleVersion="1.2.0" ExtensionBundleName="OhMyGramola">
   <ExtensionList>
-    <Extension Id="com.salmeinmotion.free-royalties-music.panel" Version="1.1.0" />
+    <Extension Id="com.salmeinmotion.free-royalties-music.panel" Version="1.2.0" />
   </ExtensionList>
   <ExecutionEnvironment>
     <HostList>

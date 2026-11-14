@@ -2,6 +2,11 @@
 
 All notable changes to **OhMyGramola** follow [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] - 2026-11-14
+
+### Changed
+- **Non-Destructive Pre-Comp Audio Trimming**: Importing an In/Out selection now always imports (or reuses) the **full untrimmed master audio file** inside an `OhMyGramola Music` project folder, creates a dedicated After Effects composition (`<Title> [Trim XmXXs-YmYYs]`) containing the full track shifted to `-trimIn`, and places that pre-comp at your active composition playhead (CTI). You can double-click the pre-comp or lengthen its duration at any time to recover the rest of the song without re-importing or generating duplicate `_Trimmed` files on disk.
+
 ## [1.1.0] - 2026-11-14
 
 ### Added

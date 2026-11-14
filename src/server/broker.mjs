@@ -1,7 +1,7 @@
 /**
- * OhMyGramola — Local Companion Broker (v1.1.0)
+ * OhMyGramola — Local Companion Broker (v1.2.0)
  * Runs as a standalone node.exe process outside AfterFX.exe to bypass Adobe outbound firewall blocks.
- * Provides live HTTP Range streaming, progressive waveform extraction, Jamendo API proxy, and lossless/click-free audio trimming.
+ * Provides live HTTP Range streaming, progressive waveform extraction, Jamendo API proxy, and master audio downloads.
  */
 import http from "http";
 import https from "https";
@@ -760,55 +760,14 @@ const server = http.createServer(async (req, res) => {
           }
         }
 
-        const hasTrim = typeof trimIn === "number" &&
-          typeof trimOut === "number" &&
-          isFinite(trimIn) &&
-          isFinite(trimOut) &&
-          trimOut > trimIn + 0.1;
-
-        if (hasTrim) {
-          const ff = resolveFfmpegPath();
-          if (ff) {
-            const trimmedDir = path.join(libraryDir, "_Trimmed");
-            if (!fs.existsSync(trimmedDir)) {
-              fs.mkdirSync(trimmedDir, { recursive: true });
-            }
-            const srcExt = path.extname(masterAudioPath).toLowerCase() === ".wav" ? ".wav" : ".mp3";
-            const rangeLabel = `${formatTrimTag(trimIn)}-${formatTrimTag(trimOut)}`;
-            const trimmedPath = path.join(trimmedDir, `${safeTitle} [${rangeLabel}]${srcExt}`);
-            await trimAudioWithFfmpeg(ff, masterAudioPath, trimmedPath, trimIn, trimOut);
-
-            res.writeHead(200, { "Content-Type": "application/json" });
-            return res.end(JSON.stringify({
-              ok: true,
-              path: trimmedPath,
-              masterPath: masterAudioPath,
-              trimmedOnDisk: true,
-              trimIn,
-              trimOut,
-              attribution: track.attribution
-            }));
-          }
-
-          // Fallback when ffmpeg is absent: ExtendScript trims layer inPoint/outPoint on timeline
-          res.writeHead(200, { "Content-Type": "application/json" });
-          return res.end(JSON.stringify({
-            ok: true,
-            path: masterAudioPath,
-            masterPath: masterAudioPath,
-            trimmedOnDisk: false,
-            trimIn,
-            trimOut,
-            attribution: track.attribution
-          }));
-        }
-
         res.writeHead(200, { "Content-Type": "application/json" });
         return res.end(JSON.stringify({
           ok: true,
           path: masterAudioPath,
           masterPath: masterAudioPath,
           trimmedOnDisk: false,
+          trimIn: typeof trimIn === "number" ? trimIn : null,
+          trimOut: typeof trimOut === "number" ? trimOut : null,
           attribution: track.attribution
         }));
       } catch (err) {
@@ -915,5 +874,5 @@ function streamLocalFile(filePath, req, res) {
 server.listen(0, "127.0.0.1", () => {
   const port = server.address().port;
   // Emit JSON handshake line on stdout for parent CEP panel
-  console.log(JSON.stringify({ ok: true, port: port, version: "1.1.0" }));
+  console.log(JSON.stringify({ ok: true, port: port, version: "1.2.0" }));
 });

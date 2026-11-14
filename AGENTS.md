@@ -18,7 +18,7 @@ It enables creators to discover, preview, download, and import royalty-free and 
 
 ## Architecture & Release Workflow
 - `CSXS/manifest.xml`: CEP 9+ manifest targeting `AEFT` `[17.0, 99.9]` (After Effects 2020 through 2026+ / Beta) with `--disable-web-security` and `--enable-nodejs`.
-- `host/index.jsx`: ExtendScript host script (`FreeRoyaltiesMusicHost` v2+) for project detection, footage import, CTI placement, and timeline layer trim fallback.
+- `host/index.jsx`: ExtendScript host script (`FreeRoyaltiesMusicHost` v3+) for project detection, full master footage import & deduplication inside `OhMyGramola Music`, non-destructive trimmed pre-comp creation (`<Title> [Trim ...]`), and CTI placement.
 - `src/`: Panel UI (HTML5, CSS, vanilla JS + Node.js companion broker `src/server/broker.mjs`).
 - **Release & Auto-Install Policy**:
   - Bump synchronized SemVer across `package.json`, `CSXS/manifest.xml`, `src/index.html`, `src/app.js`, `src/server/broker.mjs`, and `CHANGELOG.md` on every release.

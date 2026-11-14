@@ -2,7 +2,7 @@
 """
 OhMyGramola — Catalog Synchronizer CLI (catalog_sync.py)
 Downloads and indexes YouTube-safe music directly into P:\\IA\\RRSS\\Music.
-Complies with SalmeInMotion / OhMyGramola local library specifications.
+Includes auto-retry, timeout safety, heartbeat reporting and zero-data-loss resumption.
 """
 
 import argparse
@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import sys
 import tempfile
 import time
@@ -17,21 +18,21 @@ import urllib.request
 import urllib.parse
 from datetime import datetime
 
+# Enforce socket timeout across all network calls
+socket.setdefaulttimeout(25)
+
 USER_AGENT = "OhMyGramola-CatalogSync/1.0"
 DEFAULT_LIBRARY_DIR = r"P:\IA\RRSS\Music"
 DEFAULT_DELAY = 4.0
 MIN_VALID_SIZE_BYTES = 20 * 1024  # > 20 KB
+MAX_RETRIES = 3
 
 def sanitize_filename(name: str) -> str:
-    """Removes or replaces invalid Windows filename characters."""
-    # Replace invalid chars with safe equivalents
     s = re.sub(r'[\\/*?:"<>|]', "", name)
     s = s.strip().strip(".")
-    # Avoid empty names
     return s if s else "Untitled"
 
 def format_duration(seconds_val) -> str:
-    """Formats numeric seconds or strings like 195 into mm:ss."""
     try:
         total_sec = int(float(seconds_val))
         mins = total_sec // 60
@@ -46,7 +47,7 @@ def load_manifest(manifest_path: str) -> dict:
             with open(manifest_path, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
-            print(f"[WARN] Error reading manifest {manifest_path}: {e}")
+            print(f"[WARN] Error reading manifest {manifest_path}: {e}", flush=True)
     return {"version": 1, "lastUpdated": None, "tracks": {}}
 
 def save_manifest(manifest_path: str, data: dict):
@@ -58,8 +59,22 @@ def save_manifest(manifest_path: str, data: dict):
         os.remove(manifest_path)
     os.rename(tmp, manifest_path)
 
+def update_status(library_dir: str, status_data: dict):
+    try:
+        status_path = os.path.join(library_dir, ".sync_status.json")
+        status_data["lastHeartbeat"] = datetime.now().isoformat()
+        status_data["pid"] = os.getpid()
+        tmp = status_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(status_data, f, indent=2, ensure_ascii=False)
+        if os.path.exists(status_path):
+            os.remove(status_path)
+        os.rename(tmp, status_path)
+    except Exception:
+        pass
+
 def sync_incompetech(library_dir: str, limit: int, delay: float, dry_run: bool = False, genre_filter: str = None, bundled_dest: str = None):
-    print("=== OhMyGramola: Sincronizando fuente Incompetech (Kevin MacLeod) ===")
+    print("=== OhMyGramola: Sincronizando fuente Incompetech (Kevin MacLeod) ===", flush=True)
     
     headers = {"User-Agent": USER_AGENT}
     
@@ -70,7 +85,7 @@ def sync_incompetech(library_dir: str, limit: int, delay: float, dry_run: bool =
         genres_raw = json.loads(res.read().decode("utf-8"))
     
     genre_map = {str(g["id"]): g["genre"].strip() for g in genres_raw if "id" in g and "genre" in g}
-    print(f"✓ Cargados {len(genre_map)} géneros de Incompetech.")
+    print(f"✓ Cargados {len(genre_map)} géneros de Incompetech.", flush=True)
 
     # 2. Fetch pieces catalog
     url_pieces = "https://incompetech.com/music/royalty-free/pieces.json"
@@ -78,17 +93,16 @@ def sync_incompetech(library_dir: str, limit: int, delay: float, dry_run: bool =
     with urllib.request.urlopen(req_p, timeout=20) as res:
         pieces_raw = json.loads(res.read().decode("utf-8"))
     
-    print(f"✓ Cargadas {len(pieces_raw)} piezas del catálogo oficial de Kevin MacLeod.")
+    print(f"✓ Cargadas {len(pieces_raw)} piezas del catálogo oficial de Kevin MacLeod.", flush=True)
 
-    # Optional: save to bundled data if path given
     if bundled_dest:
         try:
             os.makedirs(os.path.dirname(bundled_dest), exist_ok=True)
             with open(bundled_dest, "w", encoding="utf-8") as f:
                 json.dump(pieces_raw, f, indent=2, ensure_ascii=False)
-            print(f"✓ Catálogo offline guardado en {bundled_dest}")
+            print(f"✓ Catálogo offline guardado en {bundled_dest}", flush=True)
         except Exception as e:
-            print(f"[WARN] No se pudo guardar el catálogo offline en {bundled_dest}: {e}")
+            print(f"[WARN] No se pudo guardar el catálogo offline en {bundled_dest}: {e}", flush=True)
 
     # 3. Load manifest
     manifest_path = os.path.join(library_dir, ".sync_manifest.json")
@@ -117,12 +131,24 @@ def sync_incompetech(library_dir: str, limit: int, delay: float, dry_run: bool =
 
         candidates.append((track_id, p, genre_name, filename))
 
-    print(f"Pistas candidatas pendientes de descarga: {len(candidates)}")
-    to_process = candidates[:limit]
-    print(f"Lote a procesar en esta ejecución: {len(to_process)} pistas (límite: {limit}, pausa entre pistas: {delay}s)\n")
+    total_candidates = len(candidates)
+    print(f"Pistas candidatas pendientes de descarga: {total_candidates}", flush=True)
+
+    if total_candidates == 0:
+        print("✓ ¡Todo el catálogo ya está completamente descargado e indexado!", flush=True)
+        update_status(library_dir, {
+            "status": "completed",
+            "source": "Incompetech",
+            "pendingCandidates": 0,
+            "message": "All tracks synced"
+        })
+        return 0
+
+    to_process = candidates[:limit] if (limit and limit > 0) else candidates
+    print(f"Lote a procesar en esta ejecución: {len(to_process)} pistas (límite: {limit or 'sin límite'}, pausa: {delay}s)\n", flush=True)
 
     if dry_run:
-        print("[DRY-RUN] Simulación completada. No se han descargado archivos.")
+        print("[DRY-RUN] Simulación completada. No se han descargado archivos.", flush=True)
         return 0
 
     local_temp_base = os.path.join(tempfile.gettempdir(), "OhMyGramola-Sync")
@@ -130,6 +156,18 @@ def sync_incompetech(library_dir: str, limit: int, delay: float, dry_run: bool =
 
     success_count = 0
     total_downloaded_bytes = 0
+
+    status_info = {
+        "status": "running",
+        "source": "Incompetech",
+        "totalBatch": len(to_process),
+        "processed": 0,
+        "success": 0,
+        "currentTrack": None,
+        "currentGenre": None,
+        "pendingOverall": total_candidates
+    }
+    update_status(library_dir, status_info)
 
     for idx, (track_id, p, genre_name, filename) in enumerate(to_process, 1):
         raw_title = (p.get("title") or "").strip()
@@ -141,9 +179,14 @@ def sync_incompetech(library_dir: str, limit: int, delay: float, dry_run: bool =
         final_json_path = os.path.join(target_dir, f"{clean_title}.json")
         final_attr_path = os.path.join(target_dir, f"{clean_title}_attribution.txt")
 
-        # Double check destination file
+        status_info["currentTrack"] = raw_title
+        status_info["currentGenre"] = genre_name
+        status_info["processed"] = idx
+        update_status(library_dir, status_info)
+
+        # Check existing destination
         if os.path.exists(final_mp3_path) and os.path.getsize(final_mp3_path) >= MIN_VALID_SIZE_BYTES:
-            print(f"[{idx}/{len(to_process)}] [YA EXISTE] {clean_title} -> {final_mp3_path}")
+            print(f"[{idx}/{len(to_process)}] [YA EXISTE] {clean_title} -> {final_mp3_path}", flush=True)
             known_tracks[track_id] = {
                 "title": raw_title,
                 "artist": "Kevin MacLeod",
@@ -159,101 +202,125 @@ def sync_incompetech(library_dir: str, limit: int, delay: float, dry_run: bool =
         download_url = f"https://incompetech.com/music/royalty-free/mp3-royaltyfree/{encoded_fn}"
 
         temp_mp3 = os.path.join(local_temp_base, f"{clean_title}.mp3.part")
-        print(f"[{idx}/{len(to_process)}] Descargando: \"{raw_title}\" ({genre_name}) ...")
-        
-        try:
-            req_dl = urllib.request.Request(download_url, headers=headers)
-            with urllib.request.urlopen(req_dl, timeout=30) as resp, open(temp_mp3, "wb") as out_f:
-                shutil.copyfileobj(resp, out_f)
+        print(f"[{idx}/{len(to_process)}] Descargando: \"{raw_title}\" ({genre_name}) ...", flush=True)
 
-            file_size = os.path.getsize(temp_mp3)
-            if file_size < MIN_VALID_SIZE_BYTES:
-                print(f"  [ERROR] Archivo descargado demasiado pequeño ({file_size} bytes). Descartando.")
-                if os.path.exists(temp_mp3):
-                    os.remove(temp_mp3)
-                continue
+        download_success = False
+        file_size = 0
 
-            # Mover a P:\IA\RRSS\Music\Incompetech\<Genero>\
-            os.makedirs(target_dir, exist_ok=True)
-            shutil.move(temp_mp3, final_mp3_path)
+        # Retry loop per track
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                req_dl = urllib.request.Request(download_url, headers=headers)
+                with urllib.request.urlopen(req_dl, timeout=25) as resp, open(temp_mp3, "wb") as out_f:
+                    shutil.copyfileobj(resp, out_f)
 
-            # Attribution format (Kevin MacLeod official CC-BY 4.0)
-            attribution_text = (
-                f'"{raw_title}" Kevin MacLeod (incompetech.com)\n'
-                f'Licensed under Creative Commons: By Attribution 4.0 License\n'
-                f'http://creativecommons.org/licenses/by/4.0/'
-            )
-            with open(final_attr_path, "w", encoding="utf-8") as f:
-                f.write(attribution_text)
+                file_size = os.path.getsize(temp_mp3)
+                if file_size < MIN_VALID_SIZE_BYTES:
+                    print(f"  [ERROR] Intento {attempt}: archivo demasiado pequeño ({file_size} bytes).", flush=True)
+                    if os.path.exists(temp_mp3):
+                        os.remove(temp_mp3)
+                    time.sleep(2)
+                    continue
 
-            # Sidecar JSON metadata
-            web_url = p.get("filmmusicURL") or (
-                f"https://incompetech.com/music/royalty-free/index.html?isrc={p.get('isrc')}"
-                if p.get("isrc")
-                else f"https://incompetech.com/music/royalty-free/index.html?keywords={urllib.parse.quote(raw_title)}"
-            )
-
-            sidecar_data = {
-                "title": raw_title,
-                "artist": "Kevin MacLeod",
-                "sourceName": "Incompetech",
-                "genre": genre_name,
-                "bpm": str(p.get("bpm") or "—"),
-                "duration": format_duration(p.get("length") or "—"),
-                "mood": (p.get("feel") or "").strip(),
-                "instruments": (p.get("instruments") or "").strip(),
-                "licenseType": "CC BY 4.0",
-                "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
-                "webUrl": web_url,
-                "attribution": attribution_text,
-                "safeForYouTube": True
-            }
-            with open(final_json_path, "w", encoding="utf-8") as f:
-                json.dump(sidecar_data, f, indent=2, ensure_ascii=False)
-
-            total_downloaded_bytes += file_size
-            success_count += 1
-            print(f"  ✓ OK: {file_size / (1024*1024):.2f} MB guardado en {final_mp3_path}")
-
-            # Update manifest
-            known_tracks[track_id] = {
-                "title": raw_title,
-                "artist": "Kevin MacLeod",
-                "genre": genre_name,
-                "localPath": final_mp3_path,
-                "sizeBytes": file_size,
-                "syncedAt": datetime.now().isoformat()
-            }
-            save_manifest(manifest_path, manifest)
-
-        except urllib.error.HTTPError as he:
-            print(f"  [HTTP ERROR {he.code}] en {download_url}: {he.reason}")
-            if he.code in (403, 429):
-                print("  [STOP] El servidor ha devuelto un límite o bloqueo. Deteniendo sincronización de inmediato.")
+                download_success = True
                 break
-        except Exception as e:
-            print(f"  [ERROR] Fallo al descargar {raw_title}: {e}")
-        finally:
+
+            except urllib.error.HTTPError as he:
+                print(f"  [HTTP ERROR {he.code}] en {download_url} (Intento {attempt}/{MAX_RETRIES}): {he.reason}", flush=True)
+                if he.code in (429, 503):
+                    print("  [PAUSA] Esperando 20 segundos por límite temporal...", flush=True)
+                    time.sleep(20)
+                elif he.code == 404:
+                    print(f"  [404] Pista no encontrada en servidor, saltando.", flush=True)
+                    break
+                else:
+                    time.sleep(3)
+            except Exception as e:
+                print(f"  [ERROR] Intento {attempt}/{MAX_RETRIES} fallido para {raw_title}: {e}", flush=True)
+                time.sleep(3)
+
+        if not download_success:
+            print(f"  ✗ Saltando pista tras {MAX_RETRIES} intentos fallidos: {raw_title}", flush=True)
             if os.path.exists(temp_mp3):
                 try:
                     os.remove(temp_mp3)
                 except Exception:
                     pass
+            continue
+
+        # Move atomic to library
+        os.makedirs(target_dir, exist_ok=True)
+        shutil.move(temp_mp3, final_mp3_path)
+
+        # Attribution format
+        attribution_text = (
+            f'"{raw_title}" Kevin MacLeod (incompetech.com)\n'
+            f'Licensed under Creative Commons: By Attribution 4.0 License\n'
+            f'http://creativecommons.org/licenses/by/4.0/'
+        )
+        with open(final_attr_path, "w", encoding="utf-8") as f:
+            f.write(attribution_text)
+
+        # Sidecar JSON metadata
+        web_url = p.get("filmmusicURL") or (
+            f"https://incompetech.com/music/royalty-free/index.html?isrc={p.get('isrc')}"
+            if p.get("isrc")
+            else f"https://incompetech.com/music/royalty-free/index.html?keywords={urllib.parse.quote(raw_title)}"
+        )
+
+        sidecar_data = {
+            "title": raw_title,
+            "artist": "Kevin MacLeod",
+            "sourceName": "Incompetech",
+            "genre": genre_name,
+            "bpm": str(p.get("bpm") or "—"),
+            "duration": format_duration(p.get("length") or "—"),
+            "mood": (p.get("feel") or "").strip(),
+            "instruments": (p.get("instruments") or "").strip(),
+            "licenseType": "CC BY 4.0",
+            "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+            "webUrl": web_url,
+            "attribution": attribution_text,
+            "safeForYouTube": True
+        }
+        with open(final_json_path, "w", encoding="utf-8") as f:
+            json.dump(sidecar_data, f, indent=2, ensure_ascii=False)
+
+        total_downloaded_bytes += file_size
+        success_count += 1
+        status_info["success"] = success_count
+        update_status(library_dir, status_info)
+        print(f"  ✓ OK: {file_size / (1024*1024):.2f} MB guardado en {final_mp3_path}", flush=True)
+
+        # Update manifest
+        known_tracks[track_id] = {
+            "title": raw_title,
+            "artist": "Kevin MacLeod",
+            "genre": genre_name,
+            "localPath": final_mp3_path,
+            "sizeBytes": file_size,
+            "syncedAt": datetime.now().isoformat()
+        }
+        save_manifest(manifest_path, manifest)
 
         # Polite rate-limiting pause
         if idx < len(to_process):
             time.sleep(delay)
 
-    print(f"\n=== Resumen de sincronización ===")
-    print(f"Pistas procesadas con éxito: {success_count}/{len(to_process)}")
-    print(f"Volumen transferido: {total_downloaded_bytes / (1024*1024):.2f} MB")
-    print(f"Manifiesto actualizado en: {manifest_path}")
+    print(f"\n=== Resumen de sincronización ===", flush=True)
+    print(f"Pistas procesadas con éxito: {success_count}/{len(to_process)}", flush=True)
+    print(f"Volumen transferido: {total_downloaded_bytes / (1024*1024):.2f} MB", flush=True)
+    print(f"Manifiesto actualizado en: {manifest_path}", flush=True)
+
+    status_info["status"] = "idle"
+    status_info["message"] = f"Batch finished: {success_count} tracks"
+    update_status(library_dir, status_info)
     return success_count
 
 def main():
     parser = argparse.ArgumentParser(description="OhMyGramola Music Catalog Synchronizer")
     parser.add_argument("--source", default="incompetech", choices=["incompetech", "archive-cc0"], help="Music source provider")
-    parser.add_argument("--limit", type=int, default=10, help="Max number of tracks to download in this run (default: 10)")
+    parser.add_argument("--limit", type=int, default=0, help="Max number of tracks to download (0 = all pending candidates)")
     parser.add_argument("--delay", type=float, default=DEFAULT_DELAY, help=f"Polite delay in seconds between downloads (default: {DEFAULT_DELAY})")
     parser.add_argument("--library-dir", default=DEFAULT_LIBRARY_DIR, help="Destination root for local music library")
     parser.add_argument("--genre", default=None, help="Optional genre filter")
@@ -274,8 +341,6 @@ def main():
             genre_filter=args.genre,
             bundled_dest=bundled_dest
         )
-    else:
-        print(f"Source '{args.source}' no implementada directamente todavía.")
 
 if __name__ == "__main__":
     main()

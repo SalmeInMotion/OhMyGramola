@@ -1,6 +1,6 @@
 /**
- * Free Royalties Music — ExtendScript Host Bridge
- * Targets: Adobe After Effects CC 2022+ (AEFT)
+ * OhMyGramola — ExtendScript Host Bridge
+ * Targets: Adobe After Effects CC 2020 - 2026+ (AEFT 17.0 - 99.9)
  * ECMAScript 3 (ES3) compliant with bundled Crockford JSON shim.
  */
 
@@ -77,8 +77,45 @@ if (typeof JSON === "undefined" || !JSON || typeof JSON.stringify !== "function"
 
 // 2. FreeRoyaltiesMusicHost API
 var FreeRoyaltiesMusicHost = (function () {
+    function formatSecTag(seconds) {
+        var total = Math.max(0, Math.round(Number(seconds) || 0));
+        var mins = Math.floor(total / 60);
+        var secs = total % 60;
+        return mins + "m" + (secs < 10 ? "0" : "") + secs + "s";
+    }
+
+    function stripExtension(name) {
+        return String(name || "Audio").replace(/\.[^.\/\\]+$/, "");
+    }
+
+    function findOrCreateProjectFolder(folderName) {
+        var i, item;
+        for (i = 1; i <= app.project.numItems; i++) {
+            item = app.project.item(i);
+            if ((item instanceof FolderItem) && item.parentFolder === app.project.rootFolder && item.name === folderName) {
+                return item;
+            }
+        }
+        return app.project.items.addFolder(folderName);
+    }
+
+    function findExistingAudioFootage(targetFsName) {
+        var normTarget = String(targetFsName || "").toLowerCase();
+        var i, item;
+        for (i = 1; i <= app.project.numItems; i++) {
+            item = app.project.item(i);
+            if ((item instanceof FootageItem) && item.mainSource && item.mainSource.file) {
+                if (String(item.mainSource.file.fsName).toLowerCase() === normTarget) {
+                    return item;
+                }
+            }
+        }
+        return null;
+    }
+
     return {
-        version: 2,
+        version: 3,
+
         getProjectContext: function () {
             try {
                 if (!app.project) {
@@ -117,7 +154,7 @@ var FreeRoyaltiesMusicHost = (function () {
             }
         },
 
-        importAudio: function (filePath, addToActiveComp, trimIn, trimOut, alreadyTrimmedOnDisk) {
+        importAudio: function (filePath, addToActiveComp, trimIn, trimOut) {
             try {
                 if (!app.project) {
                     return JSON.stringify({ ok: false, error: "No open After Effects project." });
@@ -131,37 +168,78 @@ var FreeRoyaltiesMusicHost = (function () {
 
                 app.beginUndoGroup("OhMyGramola: Import Audio");
 
-                var importOptions = new ImportOptions(audioFile);
-                if (!importOptions.canImportAs(ImportAsType.FOOTAGE)) {
-                    app.endUndoGroup();
-                    return JSON.stringify({ ok: false, error: "File cannot be imported as footage: " + cleanPath });
+                var musicBin = findOrCreateProjectFolder("OhMyGramola Music");
+
+                // Reuse master footage item if already imported in this .aep so multiple trims share 1 master file
+                var footageItem = findExistingAudioFootage(audioFile.fsName);
+                if (!footageItem) {
+                    var importOptions = new ImportOptions(audioFile);
+                    if (!importOptions.canImportAs(ImportAsType.FOOTAGE)) {
+                        app.endUndoGroup();
+                        return JSON.stringify({ ok: false, error: "File cannot be imported as footage: " + cleanPath });
+                    }
+                    importOptions.importAs = ImportAsType.FOOTAGE;
+                    footageItem = app.project.importFile(importOptions);
+                    footageItem.parentFolder = musicBin;
                 }
 
-                importOptions.importAs = ImportAsType.FOOTAGE;
-                var footageItem = app.project.importFile(importOptions);
+                var activeComp = (app.project.activeItem && (app.project.activeItem instanceof CompItem))
+                    ? app.project.activeItem
+                    : null;
+
+                var hasTrim = typeof trimIn === "number" &&
+                    typeof trimOut === "number" &&
+                    isFinite(trimIn) &&
+                    isFinite(trimOut) &&
+                    trimOut > trimIn + 0.05;
 
                 var layerCreated = false;
-                if (addToActiveComp && app.project.activeItem && (app.project.activeItem instanceof CompItem)) {
-                    var comp = app.project.activeItem;
-                    var layer = comp.layers.add(footageItem);
-                    var cti = comp.time || 0;
+                var precompCreated = false;
+                var compName = null;
 
-                    var hasLayerTrim = (!alreadyTrimmedOnDisk) &&
-                        typeof trimIn === "number" &&
-                        typeof trimOut === "number" &&
-                        isFinite(trimIn) &&
-                        isFinite(trimOut) &&
-                        trimOut > trimIn + 0.05;
+                if (hasTrim) {
+                    // Clamp trim bounds to actual footage duration if known
+                    var footDur = (footageItem.duration && footageItem.duration > 0) ? footageItem.duration : trimOut;
+                    var safeIn = Math.max(0, Math.min(trimIn, Math.max(0, footDur - 0.05)));
+                    var safeOut = Math.min(footDur, Math.max(safeIn + 0.05, trimOut));
+                    var trimDur = Math.max(0.1, safeOut - safeIn);
 
-                    if (hasLayerTrim) {
-                        var dur = trimOut - trimIn;
-                        layer.startTime = cti - trimIn;
-                        layer.inPoint = cti;
-                        layer.outPoint = cti + dur;
-                    } else {
-                        layer.startTime = cti;
+                    // Match active composition specs when available, otherwise sensible HD defaults
+                    var compW = activeComp ? activeComp.width : 1920;
+                    var compH = activeComp ? activeComp.height : 1080;
+                    var compPar = activeComp ? activeComp.pixelAspect : 1.0;
+                    var compFps = activeComp ? activeComp.frameRate : 30;
+
+                    var baseTitle = stripExtension(footageItem.name);
+                    compName = baseTitle + " [Trim " + formatSecTag(safeIn) + "-" + formatSecTag(safeOut) + "]";
+                    if (compName.length > 90) {
+                        compName = baseTitle.substring(0, 58) + " [Trim " + formatSecTag(safeIn) + "-" + formatSecTag(safeOut) + "]";
                     }
-                    layerCreated = true;
+
+                    // Create dedicated audio composition containing the FULL untrimmed audio shifted to safeIn
+                    var trimComp = app.project.items.addComp(compName, compW, compH, compPar, trimDur, compFps);
+                    trimComp.parentFolder = musicBin;
+
+                    var innerLayer = trimComp.layers.add(footageItem);
+                    innerLayer.startTime = -safeIn;
+                    innerLayer.inPoint = 0;
+                    innerLayer.outPoint = trimDur;
+                    precompCreated = true;
+
+                    if (addToActiveComp && activeComp) {
+                        var outerLayer = activeComp.layers.add(trimComp);
+                        outerLayer.startTime = activeComp.time || 0;
+                        layerCreated = true;
+                    } else {
+                        // If no active composition was open, open the newly created trim comp in the viewer
+                        try { trimComp.openInViewer(); } catch (_) {}
+                    }
+                } else {
+                    if (addToActiveComp && activeComp) {
+                        var directLayer = activeComp.layers.add(footageItem);
+                        directLayer.startTime = activeComp.time || 0;
+                        layerCreated = true;
+                    }
                 }
 
                 app.endUndoGroup();
@@ -171,6 +249,8 @@ var FreeRoyaltiesMusicHost = (function () {
                     imported: true,
                     name: footageItem.name,
                     itemId: footageItem.id,
+                    precompCreated: precompCreated,
+                    compName: compName,
                     layerCreated: layerCreated
                 });
             } catch (e) {

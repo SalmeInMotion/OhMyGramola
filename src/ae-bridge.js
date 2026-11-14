@@ -45,9 +45,9 @@
       const extDir = getExtensionDir();
       const jsxPath = extDir ? `${extDir}/host/index.jsx` : "";
 
-      // Ensure index.jsx v2 is hot-reloaded if outdated or undefined
+      // Ensure index.jsx v3 is hot-reloaded if outdated or undefined
       const guardedScript = wrap(`
-        if (typeof FreeRoyaltiesMusicHost === 'undefined' || FreeRoyaltiesMusicHost.version !== 2) {
+        if (typeof FreeRoyaltiesMusicHost === 'undefined' || FreeRoyaltiesMusicHost.version !== 3) {
           if (${JSON.stringify(jsxPath)}) {
             $.evalFile(new File(${JSON.stringify(jsxPath)}));
           }
@@ -86,8 +86,7 @@
       const escapedPath = JSON.stringify(String(filePath).replace(/\\/g, "/"));
       const trimIn = typeof options.trimIn === "number" ? options.trimIn : null;
       const trimOut = typeof options.trimOut === "number" ? options.trimOut : null;
-      const trimmedOnDisk = Boolean(options.trimmedOnDisk);
-      const script = `FreeRoyaltiesMusicHost.importAudio(${escapedPath}, ${Boolean(addToActiveComp)}, ${JSON.stringify(trimIn)}, ${JSON.stringify(trimOut)}, ${trimmedOnDisk})`;
+      const script = `FreeRoyaltiesMusicHost.importAudio(${escapedPath}, ${Boolean(addToActiveComp)}, ${JSON.stringify(trimIn)}, ${JSON.stringify(trimOut)})`;
       return evalScript(script);
     }
   };

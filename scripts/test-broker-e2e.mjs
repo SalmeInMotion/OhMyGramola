@@ -137,8 +137,8 @@ const runTests = async () => {
     const peaksCacheFile = path.join(os.tmpdir(), "free-royalties-music-preview-cache", `${wfId}.peaks.json`);
     try { if (fs.existsSync(peaksCacheFile)) fs.unlinkSync(peaksCacheFile); } catch (_) {}
 
-    // Test 6: /api/import with In/Out audio trimming into a disposable temp folder
-    console.log("Testing /api/import In/Out FFmpeg trimming...");
+    // Test 6: /api/import preserves full untrimmed master file AND ExtendScript v3 builds non-destructive pre-comp
+    console.log("Testing /api/import master preservation & ExtendScript v3 pre-comp trim logic...");
     const tempImportDir = fs.mkdtempSync(path.join(os.tmpdir(), "ohmygramola-trim-e2e-"));
     try {
       const trimRes = await fetch(`http://127.0.0.1:${port}/api/import`, {
@@ -153,18 +153,133 @@ const runTests = async () => {
           },
           targetDir: tempImportDir,
           trimIn: 10.0,
-          trimOut: 20.0
+          trimOut: 25.0
         })
       });
       const trimData = await trimRes.json();
-      if (!trimData.ok || !trimData.trimmedOnDisk || !trimData.path || !fs.existsSync(trimData.path)) {
-        fail("/api/import trimming failed:", trimData);
+      if (!trimData.ok || trimData.trimmedOnDisk !== false || trimData.path !== localTarget) {
+        fail("/api/import did not return full untrimmed master audio path:", trimData);
       }
-      const stat = fs.statSync(trimData.path);
-      if (stat.size < 10240 || !trimData.path.includes("_Trimmed")) {
-        fail("Trimmed output file invalid size or location:", { path: trimData.path, size: stat.size });
+
+      // Execute host/index.jsx inside an ES3-compatible mock After Effects DOM to verify pre-comp creation & layer offsets
+      const hostJsxPath = path.resolve(__dirname, "../host/index.jsx");
+      const hostCode = fs.readFileSync(hostJsxPath, "utf-8");
+
+      function FolderItem(name, parent) { this.name = name; this.parentFolder = parent; }
+      function FootageItem(file) {
+        this.id = 101;
+        this.name = path.basename(file.fsName);
+        this.duration = 180.0;
+        this.mainSource = { file };
+        this.parentFolder = null;
       }
-      console.log(`✓ /api/import produced click-free trimmed clip (${Math.round(stat.size / 1024)} KB): ${path.basename(trimData.path)}`);
+      function CompItem(name, w, h, par, dur, fps) {
+        this.name = name;
+        this.width = w;
+        this.height = h;
+        this.pixelAspect = par;
+        this.duration = dur;
+        this.frameRate = fps;
+        this.time = 4.5; // Active comp CTI at 4.5s
+        this.parentFolder = null;
+        this.addedLayers = [];
+        this.layers = {
+          add: (srcItem) => {
+            const lyr = { source: srcItem, startTime: 0, inPoint: 0, outPoint: srcItem.duration };
+            this.addedLayers.push(lyr);
+            return lyr;
+          }
+        };
+        this.openInViewer = () => {};
+      }
+
+      const rootFolder = { name: "Root" };
+      const mainComp = new CompItem("Main Edit", 1920, 1080, 1.0, 60.0, 25);
+      const projectItems = [mainComp];
+
+      const aeSandbox = {
+        FolderItem,
+        FootageItem,
+        CompItem,
+        ImportAsType: { FOOTAGE: "FOOTAGE" },
+        File: function (p) {
+          this.fsName = p.replace(/\//g, "\\");
+          this.exists = fs.existsSync(this.fsName);
+        },
+        ImportOptions: function (f) {
+          this.file = f;
+          this.importAs = null;
+          this.canImportAs = () => true;
+        },
+        app: {
+          beginUndoGroup: () => {},
+          endUndoGroup: () => {},
+          project: {
+            file: null,
+            rootFolder,
+            activeItem: mainComp,
+            get numItems() { return projectItems.length; },
+            item: (idx) => projectItems[idx - 1],
+            importFile: (opts) => {
+              const ftg = new FootageItem(opts.file);
+              ftg.parentFolder = rootFolder;
+              projectItems.push(ftg);
+              return ftg;
+            },
+            items: {
+              addFolder: (name) => {
+                const fld = new FolderItem(name, rootFolder);
+                projectItems.push(fld);
+                return fld;
+              },
+              addComp: (name, w, h, par, dur, fps) => {
+                const cmp = new CompItem(name, w, h, par, dur, fps);
+                cmp.parentFolder = rootFolder;
+                projectItems.push(cmp);
+                return cmp;
+              }
+            }
+          }
+        }
+      };
+
+      vm.runInNewContext(hostCode, aeSandbox);
+      const host = aeSandbox.FreeRoyaltiesMusicHost;
+      if (!host || host.version !== 3) {
+        fail("Expected FreeRoyaltiesMusicHost v3, got:", host && host.version);
+      }
+
+      // First trimmed import (10s -> 25s)
+      const res1 = JSON.parse(host.importAudio(localTarget, true, 10.0, 25.0));
+      if (!res1.ok || !res1.precompCreated || !res1.layerCreated) {
+        fail("ExtendScript importAudio failed to create pre-comp & outer layer:", res1);
+      }
+
+      const createdComps = projectItems.filter((it) => it instanceof CompItem && it !== mainComp);
+      const createdFootages = projectItems.filter((it) => it instanceof FootageItem);
+      if (createdComps.length !== 1 || createdFootages.length !== 1) {
+        fail("Expected 1 master footage and 1 trim comp:", { comps: createdComps.length, footages: createdFootages.length });
+      }
+
+      const trimComp = createdComps[0];
+      const innerAudioLayer = trimComp.addedLayers[0];
+      const outerPrecompLayer = mainComp.addedLayers[0];
+
+      if (Math.abs(trimComp.duration - 15.0) > 0.001 || Math.abs(innerAudioLayer.startTime - (-10.0)) > 0.001 || Math.abs(innerAudioLayer.outPoint - 15.0) > 0.001) {
+        fail("Inner audio layer inside trim comp has wrong timing:", { compDur: trimComp.duration, inner: innerAudioLayer });
+      }
+      if (outerPrecompLayer.source !== trimComp || Math.abs(outerPrecompLayer.startTime - 4.5) > 0.001) {
+        fail("Outer pre-comp layer on active comp was not placed at CTI 4.5s:", outerPrecompLayer);
+      }
+
+      // Second trimmed import of same song (30s -> 50s) should REUSE the same master FootageItem!
+      const res2 = JSON.parse(host.importAudio(localTarget, true, 30.0, 50.0));
+      const footagesAfterSecond = projectItems.filter((it) => it instanceof FootageItem);
+      if (!res2.ok || footagesAfterSecond.length !== 1) {
+        fail("Second trim of same track duplicated FootageItem instead of reusing master:", footagesAfterSecond.length);
+      }
+
+      console.log(`✓ Non-destructive AE pre-comp trim verified: "${res1.compName}" (startTime=-10s, dur=15s, master footage reused)!`);
     } finally {
       try { fs.rmSync(tempImportDir, { recursive: true, force: true }); } catch (_) {}
     }

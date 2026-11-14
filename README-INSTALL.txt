@@ -1,5 +1,5 @@
 ======================================================================
-  OhMyGramola v1.1.0 — Quick Install & Compatibility Guide (Windows)
+  OhMyGramola v1.2.0 — Quick Install & Compatibility Guide (Windows)
 ======================================================================
 
 1. HOW TO INSTALL (NO COMMAND LINE NEEDED)
@@ -22,7 +22,7 @@
 
 2. SUPPORTED ADOBE AFTER EFFECTS VERSIONS
 ----------------------------------------------------------------------
-  OhMyGramola v1.1.0 targets CEP 9+ (AEFT 17.0 through 99.9) and works
+  OhMyGramola v1.2.0 targets CEP 9+ (AEFT 17.0 through 99.9) and works
   out of the box in:
     - After Effects 2020 (v17.x)
     - After Effects 2021 (v18.x)
@@ -40,9 +40,9 @@
       search (also bypasses Windows Firewall rules blocking AfterFX).
   - FFmpeg (https://www.gyan.dev/ffmpeg/builds/):
       Optional/Recommended. Enables progressive streaming waveforms on
-      Incompetech/Local tracks and exports click-free trimmed audio
-      clips on disk. Without FFmpeg, OhMyGramola automatically falls
-      back to WebAudio visualization and non-destructive AE layer trim.
+      Incompetech/Local tracks (WebAudio fallback is automatic). In/Out
+      audio trimming is 100% non-destructive via After Effects pre-comps,
+      so the full untrimmed audio is always preserved in your project!
 
 
 4. KEYBOARD SHORTCUTS (WHEN PANEL HAS FOCUS)
