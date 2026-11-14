@@ -1,0 +1,19 @@
+{
+  "name": "ohmygramola",
+  "extensionId": "com.salmeinmotion.free-royalties-music",
+  "version": "1.1.0",
+  "description": "OhMyGramola — Royalty-free & Creative Commons music browser, live waveform trimmer, and one-click importer for Adobe After Effects (CC 2020 - 2026+)",
+  "main": "src/index.html",
+  "scripts": {
+    "deploy": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install.ps1 -Silent",
+    "installer": "powershell -NoProfile -Sta -ExecutionPolicy Bypass -File scripts/install-gui.ps1",
+    "package": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1",
+    "test": "node scripts/test-sources.mjs && node scripts/test-broker-e2e.mjs"
+  },
+  "author": "SalmeInMotion",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SalmeInMotion/OhMyGramola.git"
+  }
+}

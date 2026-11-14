@@ -1,0 +1,11 @@
+# Dependency / build artifacts
+node_modules/
+dist/
+runtime-config.json
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
