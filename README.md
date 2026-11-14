@@ -45,11 +45,25 @@ When the **OhMyGramola** panel has focus:
 
 ---
 
-## 🖥️ Compatibility & Requirements
+## 🖥️ Supported After Effects Versions & System Requirements
 
-- **Adobe After Effects**: **2020 (v17.x), 2021, 2022, 2023, 2024, 2025, 2026, and Beta** (Windows 10 / 11).
-- **[Node.js LTS](https://nodejs.org/)** *(Required for live online streaming & Jamendo API proxy; offline catalog & AE bridge still load without it)*.
-- **[FFmpeg](https://www.gyan.dev/ffmpeg/builds/)** *(Recommended — enables progressive waveform extraction on non-Jamendo tracks and physical lossless/MP3 clip trimming on disk. Without FFmpeg, OhMyGramola automatically falls back to WebAudio live visualization and non-destructive After Effects layer trimming).*
+**OhMyGramola (`v1.1.0`)** works across all modern Creative Cloud releases of **Adobe After Effects on Windows 10 / 11** (`CSXS 9.0+`, host range `AEFT [17.0, 99.9]`):
+
+| Adobe After Effects Version | Internal Host (`AEFT`) | CEP / CSXS Runtime | Status |
+| :--- | :--- | :--- | :--- |
+| **After Effects 2020** | `17.x` | `CSXS 9` / `10` | ✅ Supported |
+| **After Effects 2021** | `18.x` | `CSXS 10` / `11` | ✅ Supported |
+| **After Effects 2022** | `22.x` | `CSXS 11` | ✅ Supported |
+| **After Effects 2023** | `23.x` | `CSXS 11` | ✅ Supported |
+| **After Effects 2024** | `24.x` | `CSXS 11` / `12` | ✅ Supported |
+| **After Effects 2025** | `25.x` | `CSXS 12` | ✅ Supported |
+| **After Effects 2026 & Beta** | `26.x+` | `CSXS 12` – `16` | ✅ Supported |
+
+> **How multi-version CEP installation works:** Adobe CEP extensions live in a single user folder (`%APPDATA%\Adobe\CEP\extensions\com.salmeinmotion.free-royalties-music`). The included GUI installer (`Install-OhMyGramola.cmd`) auto-detects every After Effects version installed on the PC, enables unsigned panel loading (`PlayerDebugMode=1`) for the corresponding `CSXS` runtimes, and lets you target either specific AE releases or all current & future versions (`2020–2026+`).
+
+### External Companion Tools
+- **[Node.js LTS](https://nodejs.org/)** *(Required for live online streaming & Jamendo API proxy — runs a silent local companion process so online playback works even when `AfterFX.exe` is blocked by Windows Firewall)*.
+- **[FFmpeg](https://www.gyan.dev/ffmpeg/builds/)** *(Recommended — enables progressive waveform extraction while streaming non-Jamendo tracks and exports sample-accurate, click-free trimmed `.mp3`/`.wav` clips on disk. If FFmpeg is not installed, OhMyGramola gracefully falls back to WebAudio live visualization and non-destructive After Effects timeline layer trimming).*
 
 ---
 

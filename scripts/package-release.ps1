@@ -30,6 +30,9 @@ try {
     Copy-Item -Path (Join-Path $projectRoot 'Install-OhMyGramola.cmd') -Destination $bundleDir -Force
     Copy-Item -Path (Join-Path $projectRoot 'package.json')            -Destination $bundleDir -Force
     Copy-Item -Path (Join-Path $projectRoot 'README.md')               -Destination $bundleDir -Force
+    if (Test-Path (Join-Path $projectRoot 'README-INSTALL.txt')) {
+        Copy-Item -Path (Join-Path $projectRoot 'README-INSTALL.txt')  -Destination $bundleDir -Force
+    }
     if (Test-Path (Join-Path $projectRoot 'LICENSE')) {
         Copy-Item -Path (Join-Path $projectRoot 'LICENSE')             -Destination $bundleDir -Force
     }
@@ -38,10 +41,14 @@ try {
     }
 
     $zipPath = Join-Path $distDir "$bundleName.zip"
+    $rootZipPath = Join-Path $projectRoot "$bundleName.zip"
     if (Test-Path $zipPath) { Remove-Item -Path $zipPath -Force }
+    if (Test-Path $rootZipPath) { Remove-Item -Path $rootZipPath -Force }
 
     Compress-Archive -Path $bundleDir -DestinationPath $zipPath -CompressionLevel Optimal
-    Write-Host "[OK] Packaged release archive: $zipPath" -ForegroundColor Green
+    Copy-Item -Path $zipPath -Destination $rootZipPath -Force
+    Write-Host "[OK] Packaged release archive (root): $rootZipPath" -ForegroundColor Green
+    Write-Host "[OK] Packaged release archive (dist): $zipPath" -ForegroundColor Green
 } finally {
     if (Test-Path $stagingRoot) {
         Remove-Item -Path $stagingRoot -Recurse -Force -ErrorAction SilentlyContinue

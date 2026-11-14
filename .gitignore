@@ -1,6 +1,7 @@
 # Dependency / build artifacts
 node_modules/
 dist/
+*-Setup.zip
 runtime-config.json
 
 # OS & Editor files
