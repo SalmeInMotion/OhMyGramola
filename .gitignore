@@ -3,6 +3,7 @@ node_modules/
 dist/
 *-Setup.zip
 runtime-config.json
+.agents-scratch/
 
 # OS & Editor files
 .DS_Store
