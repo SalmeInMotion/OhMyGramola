@@ -334,6 +334,42 @@ const runTests = async () => {
       try { fs.rmSync(tempFavDir, { recursive: true, force: true }); } catch (_) {}
     }
 
+    // Test 7b: LocalLibraryProvider progressive non-blocking scan on P:\IA\RRSS\Music
+    console.log("Testing LocalLibraryProvider progressive scan & counter...");
+    const localJsPath = path.resolve(__dirname, "../src/sources/local.js");
+    const localSandbox = {
+      setTimeout,
+      clearTimeout,
+      console,
+      cep_node: { require: requireFromTest },
+      localStorage: { getItem: () => null, setItem: () => {} }
+    };
+    localSandbox.window = localSandbox;
+    vm.runInNewContext(fs.readFileSync(localJsPath, "utf-8"), localSandbox);
+
+    let batchCalls = 0;
+    let lastCount = 0;
+    let sawIncrementalCount = false;
+    const { promise: scanPromise } = localSandbox.LocalLibraryProvider.scanProgressive({
+      forceRefresh: true,
+      onBatch: ({ newMatches, totalDetected, done }) => {
+        batchCalls += 1;
+        if (!done && totalDetected > 0 && lastCount > 0 && totalDetected > lastCount) {
+          sawIncrementalCount = true;
+        }
+        lastCount = totalDetected;
+      }
+    });
+    const scannedTracks = await scanPromise;
+    if (scannedTracks.length < 300 || batchCalls < 5 || !sawIncrementalCount) {
+      fail("Progressive scan did not stream incrementally or missed tracks:", {
+        scanned: scannedTracks.length,
+        batchCalls,
+        sawIncrementalCount
+      });
+    }
+    console.log(`✓ LocalLibraryProvider progressive scan verified: ${scannedTracks.length} tracks in ${batchCalls} non-blocking batches!`);
+
     // Test 8: Windows Native Clipboard Copy
     console.log("Testing Windows native clipboard copy through broker...");
     const clipRes = await fetch(`http://127.0.0.1:${port}/api/clipboard`, {

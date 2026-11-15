@@ -2,6 +2,13 @@
 
 All notable changes to **OhMyGramola** follow [Semantic Versioning](https://semver.org/).
 
+## [1.2.1] - 2026-11-15
+
+### Added
+- **Progressive Non-Blocking Local Library Scanner**: Clicking **Local Library** now streams tracks onto the screen in batches of 16 via `fs.promises` without freezing the After Effects UI, and populates genre filters incrementally.
+- **Live Track Counter Badge**: Added a live `(N)` counter next to **Local Library** (`Local Library (347)`) that ticks up in real time as files are discovered on disk and warms up quietly in the background on panel startup.
+- **Full Library Visibility**: Raised Local Library scan limit from 150 to 2,000 tracks so large local collections are browsable without hidden truncation.
+
 ## [1.2.0] - 2026-11-14
 
 ### Changed

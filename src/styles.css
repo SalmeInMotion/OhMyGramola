@@ -148,6 +148,22 @@ body {
   font-weight: 600;
 }
 
+.tab-count {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
+.tab-count.is-scanning {
+  color: var(--accent-lime);
+  animation: tabCountPulse 1s ease-in-out infinite;
+}
+
+@keyframes tabCountPulse {
+  0%, 100% { opacity: 0.95; }
+  50% { opacity: 0.45; }
+}
+
 /* Filter & Search Bar */
 .filter-bar {
   padding: 8px 12px;

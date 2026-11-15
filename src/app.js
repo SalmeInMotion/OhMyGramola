@@ -6,7 +6,7 @@
 (function () {
   "use strict";
 
-  const APP_VERSION = "1.2.0";
+  const APP_VERSION = "1.2.1";
   window.OHMYGRAMOLA_VERSION = APP_VERSION;
 
   // Optically matched Play & Pause SVGs (exact same 15-unit vertical span y=4.5..19.5, zero OS emoji styling)
@@ -312,12 +312,47 @@
     }
   }
 
+  let activeLocalScanHandle = null;
+  let activeLoadToken = 0;
+
+  function updateLocalTabCounter(count, isScanning) {
+    const el = document.getElementById("local-tab-count");
+    if (!el) return;
+    el.textContent = typeof count === "number" ? `(${count})` : "";
+    el.classList.toggle("is-scanning", Boolean(isScanning));
+  }
+
+  function applyLocalGenresIncremental(genres) {
+    if (!elements.genreSelect || state.activeSource !== "local") return;
+    if (!Array.isArray(genres) || genres.length < 2) {
+      elements.genreSelect.style.display = "none";
+      return;
+    }
+    const existing = new Set(Array.from(elements.genreSelect.options).map((o) => o.value));
+    let added = false;
+    genres.forEach((g) => {
+      if (!existing.has(g)) {
+        const opt = document.createElement("option");
+        opt.value = g;
+        opt.textContent = g;
+        elements.genreSelect.appendChild(opt);
+        added = true;
+      }
+    });
+    if (added) {
+      elements.genreSelect.value = state.selectedGenre;
+    }
+    elements.genreSelect.style.display = "block";
+  }
+
   function renderTabs() {
     if (!elements.tabsNav) return;
 
     const merged = getMergeOnlinePreference();
     const favCount = window.FavoritesManager ? window.FavoritesManager.count() : 0;
     const favLabel = favCount > 0 ? `♥ Favorites (${favCount})` : "♥ Favorites";
+    const localCount = window.LocalLibraryProvider ? window.LocalLibraryProvider.getCachedCount() : null;
+    const localScanning = window.LocalLibraryProvider ? window.LocalLibraryProvider.isScanning() : false;
 
     let tabs = [];
     if (merged) {
@@ -327,7 +362,7 @@
       tabs = [
         { id: "online", label: "Online Library" },
         { id: "favorites", label: favLabel },
-        { id: "local", label: "Local Library" }
+        { id: "local", label: "Local Library", count: localCount, scanning: localScanning }
       ];
     } else {
       if (state.activeSource === "online") {
@@ -337,7 +372,7 @@
         { id: "incompetech", label: "Kevin MacLeod" },
         { id: "jamendo", label: "Jamendo" },
         { id: "favorites", label: favLabel },
-        { id: "local", label: "Local Library" }
+        { id: "local", label: "Local Library", count: localCount, scanning: localScanning }
       ];
     }
 
@@ -348,9 +383,22 @@
       btn.type = "button";
       btn.className = `tab-btn ${state.activeSource === tab.id ? "active" : ""}`;
       btn.dataset.source = tab.id;
-      btn.textContent = tab.label;
+
+      if (tab.id === "local") {
+        const lblSpan = document.createElement("span");
+        lblSpan.textContent = tab.label;
+        const cntSpan = document.createElement("span");
+        cntSpan.id = "local-tab-count";
+        cntSpan.className = `tab-count ${tab.scanning ? "is-scanning" : ""}`;
+        cntSpan.textContent = typeof tab.count === "number" ? `(${tab.count})` : "";
+        btn.appendChild(lblSpan);
+        btn.appendChild(cntSpan);
+      } else {
+        btn.textContent = tab.label;
+      }
 
       btn.addEventListener("click", () => {
+        const switchedToLocal = state.activeSource !== "local" && tab.id === "local";
         if (state.activeSource !== tab.id) {
           state.selectedGenre = "";
         }
@@ -359,7 +407,7 @@
         updateFilterBar();
         renderJamendoHelper();
         populateGenres();
-        loadCurrentSource();
+        loadCurrentSource({ forceLocalRefresh: switchedToLocal });
       });
 
       elements.tabsNav.appendChild(btn);
@@ -385,21 +433,15 @@
         elements.genreSelect.style.display = "none";
       }
     } else if (state.activeSource === "local" && window.LocalLibraryProvider) {
-      try {
-        const localGenres = await window.LocalLibraryProvider.getGenres();
-        if (localGenres.length >= 2) {
-          localGenres.forEach((g) => {
-            const opt = document.createElement("option");
-            opt.value = g;
-            opt.textContent = g;
-            elements.genreSelect.appendChild(opt);
-          });
-          elements.genreSelect.value = state.selectedGenre;
-          elements.genreSelect.style.display = "block";
-        } else {
+      // Genres for Local Library are populated incrementally during progressive scan
+      if (!window.LocalLibraryProvider.isScanning() && window.LocalLibraryProvider.getCachedCount() !== null) {
+        try {
+          const localGenres = await window.LocalLibraryProvider.getGenres();
+          applyLocalGenresIncremental(localGenres);
+        } catch (_) {
           elements.genreSelect.style.display = "none";
         }
-      } catch (_) {
+      } else {
         elements.genreSelect.style.display = "none";
       }
     } else if (state.activeSource === "favorites" && window.FavoritesManager) {
@@ -425,7 +467,13 @@
     }
   }
 
-  async function loadCurrentSource() {
+  async function loadCurrentSource({ forceLocalRefresh = false } = {}) {
+    if (activeLocalScanHandle && typeof activeLocalScanHandle.cancel === "function") {
+      activeLocalScanHandle.cancel();
+      activeLocalScanHandle = null;
+    }
+
+    const loadToken = ++activeLoadToken;
     renderJamendoHelper();
 
     if (state.activeSource === "jamendo" && window.JamendoProvider && !window.JamendoProvider.hasClientId()) {
@@ -433,6 +481,52 @@
       state.loading = false;
       elements.trackList.innerHTML = "";
       renderStatus("Paste your free Jamendo Client ID above to browse thousands of YouTube-safe tracks.");
+      return;
+    }
+
+    if (state.activeSource === "local" && window.LocalLibraryProvider && typeof window.LocalLibraryProvider.scanProgressive === "function") {
+      state.loading = true;
+      state.tracks = [];
+      elements.trackList.innerHTML = "";
+      const initialCount = window.LocalLibraryProvider.getCachedCount();
+      renderStatus(initialCount !== null
+        ? `Scanning local library... (${initialCount} tracks detected)`
+        : "Scanning local library...");
+
+      const handle = window.LocalLibraryProvider.scanProgressive({
+        query: state.searchQuery,
+        genre: state.selectedGenre,
+        forceRefresh: forceLocalRefresh,
+        onBatch({ newMatches, totalDetected, genres, done }) {
+          if (loadToken !== activeLoadToken || state.activeSource !== "local") return;
+
+          updateLocalTabCounter(totalDetected, !done);
+          applyLocalGenresIncremental(genres);
+
+          if (newMatches && newMatches.length > 0) {
+            state.tracks.push(...newMatches);
+            appendTrackCards(newMatches);
+          }
+
+          if (!done) {
+            renderStatus(`Scanning local library... ${totalDetected} tracks detected`);
+          } else {
+            state.loading = false;
+            if (state.tracks.length === 0) {
+              renderStatus("No tracks found matching your query or filters.");
+            } else {
+              renderStatus("");
+            }
+          }
+        }
+      });
+
+      activeLocalScanHandle = handle;
+      await handle.promise;
+      if (loadToken === activeLoadToken && activeLocalScanHandle === handle) {
+        activeLocalScanHandle = null;
+        state.loading = false;
+      }
       return;
     }
 
@@ -492,10 +586,12 @@
         results = merged;
       }
 
+      if (loadToken !== activeLoadToken) return;
       state.tracks = results;
       state.loading = false;
       renderTrackList();
     } catch (err) {
+      if (loadToken !== activeLoadToken) return;
       state.loading = false;
       renderStatus(`Error loading tracks: ${err.message || err}`);
     }
@@ -518,9 +614,113 @@
     }
   }
 
+  function createTrackCard(track, currentTrack, isPlaying) {
+    const isCurrent = Boolean(currentTrack && currentTrack.id === track.id);
+    const isFav = window.FavoritesManager ? window.FavoritesManager.isFavorite(track.id) : false;
+    const trim = window.WaveformView ? window.WaveformView.getTrim(track.id) : null;
+
+    const card = document.createElement("div");
+    card.className = `track-card ${isCurrent ? "active-playback" : ""}`;
+    card.dataset.trackId = track.id;
+
+    const playSvg = isCurrent && isPlaying ? pauseIconSvg(14) : playIconSvg(14);
+    const sourceBadgeText = track.source === "incompetech"
+      ? "Incompetech"
+      : track.source === "jamendo"
+      ? "Jamendo"
+      : (track.sourceLabel || "Local");
+
+    const linkHtml = track.webUrl
+      ? `<button type="button" class="btn-sm btn-open-link" title="Open original track page in web browser (↗)">↗</button>`
+      : ``;
+
+    let importLabel = "Import to AE";
+    if (state.downloadingId === track.id) {
+      importLabel = "Importing...";
+    } else if (trim) {
+      const trimDur = (trim.trimOut - trim.trimIn).toFixed(1);
+      importLabel = `Import Trim (${trimDur}s)`;
+    }
+
+    card.innerHTML = `
+      <button type="button" class="play-circle-btn" title="Play / Pause (Space)" aria-label="Play or Pause">${playSvg}</button>
+      <div class="track-info">
+        <div class="track-title" title="${track.title.replace(/"/g, "&quot;")}">${track.title}</div>
+        <div class="track-artist">${track.artist}</div>
+        <div class="track-meta">
+          <span class="badge badge-source">${sourceBadgeText}</span>
+          <span class="badge badge-license">${track.licenseType}</span>
+          <span class="badge">${track.genre}</span>
+          ${track.bpm && track.bpm !== "—" ? `<span class="badge">${track.bpm} BPM</span>` : ""}
+          <span class="badge">${track.duration}</span>
+        </div>
+      </div>
+      <div class="track-actions">
+        <button type="button" class="fav-btn ${isFav ? "active" : ""}" title="${isFav ? "Remove from Favorites" : "Add to Favorites"}" aria-label="Favorite">${heartIconSvg(isFav, 14)}</button>
+        ${linkHtml}
+        <button type="button" class="btn-sm btn-copy" title="Copy YouTube description credits to clipboard">Copy Credits</button>
+        <button type="button" class="btn-sm btn-import ${trim ? "is-trimmed" : ""}" title="${trim ? "Import trimmed In/Out selection into After Effects" : "Download & import directly into After Effects project"}">
+          ${importLabel}
+        </button>
+      </div>
+    `;
+
+    card.querySelector(".play-circle-btn").addEventListener("click", () => {
+      window.MusicPlayer.toggle(track);
+    });
+
+    card.querySelector(".fav-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (!window.FavoritesManager) return;
+      const added = window.FavoritesManager.toggle(track);
+      showToast(added ? `♥ Added "${track.title}" to Favorites` : `Removed "${track.title}" from Favorites`);
+      if (state.activeSource === "favorites" && !added) {
+        loadCurrentSource();
+      } else {
+        renderTrackList();
+        updateNowPlayingFavoriteUI();
+      }
+    });
+
+    const linkBtn = card.querySelector(".btn-open-link");
+    if (linkBtn && track.webUrl) {
+      linkBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (window.BrokerClient && typeof window.BrokerClient.openExternal === "function") {
+          window.BrokerClient.openExternal(track.webUrl);
+        }
+      });
+    }
+
+    card.querySelector(".btn-copy").addEventListener("click", async () => {
+      const ok = await copyToClipboard(track.attribution);
+      if (ok) {
+        showToast("✓ CC attribution copied to clipboard for YouTube");
+      }
+    });
+
+    card.querySelector(".btn-import").addEventListener("click", () => {
+      handleDownloadAndImport(track);
+    });
+
+    return card;
+  }
+
+  function appendTrackCards(tracks) {
+    if (!elements.trackList || !tracks || tracks.length === 0) return;
+    const currentTrack = window.MusicPlayer.getCurrentTrack();
+    const isPlaying = window.MusicPlayer.isPlaying();
+    const frag = document.createDocumentFragment();
+    tracks.forEach((track) => {
+      frag.appendChild(createTrackCard(track, currentTrack, isPlaying));
+    });
+    elements.trackList.appendChild(frag);
+  }
+
   function renderTrackList() {
     elements.trackList.innerHTML = "";
     if (state.tracks.length === 0) {
+      if (state.loading && state.activeSource === "local") return;
       if (state.activeSource === "favorites" && !state.searchQuery) {
         renderStatus("No favorites yet. Click the heart icon (or press F) on any song you like!");
       } else {
@@ -528,111 +728,10 @@
       }
       return;
     }
-    renderStatus("");
-
-    const currentTrack = window.MusicPlayer.getCurrentTrack();
-    const isPlaying = window.MusicPlayer.isPlaying();
-
-    state.tracks.forEach((track) => {
-      const isCurrent = Boolean(currentTrack && currentTrack.id === track.id);
-      const isFav = window.FavoritesManager ? window.FavoritesManager.isFavorite(track.id) : false;
-      const trim = window.WaveformView ? window.WaveformView.getTrim(track.id) : null;
-
-      const card = document.createElement("div");
-      card.className = `track-card ${isCurrent ? "active-playback" : ""}`;
-      card.dataset.trackId = track.id;
-
-      const playSvg = isCurrent && isPlaying ? pauseIconSvg(14) : playIconSvg(14);
-      const sourceBadgeText = track.source === "incompetech"
-        ? "Incompetech"
-        : track.source === "jamendo"
-        ? "Jamendo"
-        : (track.sourceLabel || "Local");
-
-      const linkHtml = track.webUrl
-        ? `<button type="button" class="btn-sm btn-open-link" title="Open original track page in web browser (↗)">↗</button>`
-        : ``;
-
-      let importLabel = "Import to AE";
-      if (state.downloadingId === track.id) {
-        importLabel = "Importing...";
-      } else if (trim) {
-        const trimDur = (trim.trimOut - trim.trimIn).toFixed(1);
-        importLabel = `Import Trim (${trimDur}s)`;
-      }
-
-      card.innerHTML = `
-        <button type="button" class="play-circle-btn" title="Play / Pause (Space)" aria-label="Play or Pause">${playSvg}</button>
-        <div class="track-info">
-          <div class="track-title" title="${track.title.replace(/"/g, "&quot;")}">${track.title}</div>
-          <div class="track-artist">${track.artist}</div>
-          <div class="track-meta">
-            <span class="badge badge-source">${sourceBadgeText}</span>
-            <span class="badge badge-license">${track.licenseType}</span>
-            <span class="badge">${track.genre}</span>
-            ${track.bpm && track.bpm !== "—" ? `<span class="badge">${track.bpm} BPM</span>` : ""}
-            <span class="badge">${track.duration}</span>
-          </div>
-        </div>
-        <div class="track-actions">
-          <button type="button" class="fav-btn ${isFav ? "active" : ""}" title="${isFav ? "Remove from Favorites" : "Add to Favorites"}" aria-label="Favorite">${heartIconSvg(isFav, 14)}</button>
-          ${linkHtml}
-          <button type="button" class="btn-sm btn-copy" title="Copy YouTube description credits to clipboard">Copy Credits</button>
-          <button type="button" class="btn-sm btn-import ${trim ? "is-trimmed" : ""}" title="${trim ? "Import trimmed In/Out selection into After Effects" : "Download & import directly into After Effects project"}">
-            ${importLabel}
-          </button>
-        </div>
-      `;
-
-      // Play button event
-      const playBtn = card.querySelector(".play-circle-btn");
-      playBtn.addEventListener("click", () => {
-        window.MusicPlayer.toggle(track);
-      });
-
-      // Favorite toggle event
-      const favBtn = card.querySelector(".fav-btn");
-      favBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        if (!window.FavoritesManager) return;
-        const added = window.FavoritesManager.toggle(track);
-        showToast(added ? `♥ Added "${track.title}" to Favorites` : `Removed "${track.title}" from Favorites`);
-        if (state.activeSource === "favorites" && !added) {
-          loadCurrentSource();
-        } else {
-          renderTrackList();
-          updateNowPlayingFavoriteUI();
-        }
-      });
-
-      // Open link button event
-      const linkBtn = card.querySelector(".btn-open-link");
-      if (linkBtn && track.webUrl) {
-        linkBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          if (window.BrokerClient && typeof window.BrokerClient.openExternal === "function") {
-            window.BrokerClient.openExternal(track.webUrl);
-          }
-        });
-      }
-
-      // Copy credits button event
-      const copyBtn = card.querySelector(".btn-copy");
-      copyBtn.addEventListener("click", async () => {
-        const ok = await copyToClipboard(track.attribution);
-        if (ok) {
-          showToast("✓ CC attribution copied to clipboard for YouTube");
-        }
-      });
-
-      // Import button event
-      const importBtn = card.querySelector(".btn-import");
-      importBtn.addEventListener("click", () => {
-        handleDownloadAndImport(track);
-      });
-
-      elements.trackList.appendChild(card);
-    });
+    if (!state.loading) {
+      renderStatus("");
+    }
+    appendTrackCards(state.tracks);
   }
 
   async function handleDownloadAndImport(track) {
@@ -998,4 +1097,11 @@
   setTimeout(() => {
     loadCurrentSource();
   }, 200);
+  setTimeout(() => {
+    if (window.LocalLibraryProvider && typeof window.LocalLibraryProvider.warmUp === "function") {
+      window.LocalLibraryProvider.warmUp((count, done) => {
+        updateLocalTabCounter(count, !done);
+      });
+    }
+  }, 450);
 })();
