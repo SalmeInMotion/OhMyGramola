@@ -1,5 +1,5 @@
 /**
- * OhMyGramola — Local Companion Broker (v1.2.2)
+ * OhMyGramola — Local Companion Broker (v1.2.3)
  * Runs as a standalone node.exe process outside AfterFX.exe to bypass Adobe outbound firewall blocks.
  * Provides live HTTP Range streaming, progressive waveform extraction, Jamendo API proxy, and master audio downloads.
  */
@@ -509,6 +509,55 @@ function streamRemoteAudio(targetUrl, safeBase, cachedFile, estimatedDurSec, req
   });
 }
 
+async function embedMp3MetadataWithFfmpeg(ffmpegExe, mp3Path, track) {
+  if (!ffmpegExe || !mp3Path || !mp3Path.toLowerCase().endsWith(".mp3")) return false;
+  const tmpOut = mp3Path + ".tagged.mp3";
+  const metaJson = JSON.stringify({
+    title: track.title || "",
+    artist: track.artist || "",
+    genre: track.genre || "",
+    bpm: track.bpm || "—",
+    duration: track.duration || "—",
+    sourceName: track.sourceLabel || track.source || "OhMyGramola",
+    licenseType: track.licenseType || "Royalty-Free",
+    webUrl: track.webUrl || "",
+    attribution: track.attribution || "",
+    safeForYouTube: true
+  });
+
+  const args = [
+    "-v", "error", "-y",
+    "-i", mp3Path,
+    "-c:a", "copy",
+    "-id3v2_version", "3",
+    "-metadata", `title=${track.title || ""}`,
+    "-metadata", `artist=${track.artist || ""}`,
+    "-metadata", `genre=${track.genre || ""}`,
+    "-metadata", `copyright=${track.licenseType || ""}`,
+    "-metadata", `comment=${track.attribution || ""}`,
+    "-metadata", `OHMYGRAMOLA_META=${metaJson}`,
+    tmpOut
+  ];
+
+  return new Promise((resolve) => {
+    const proc = spawn(ffmpegExe, args, { windowsHide: true });
+    proc.on("close", (code) => {
+      if (code === 0 && fs.existsSync(tmpOut) && fs.statSync(tmpOut).size > 10240) {
+        try {
+          fs.renameSync(tmpOut, mp3Path);
+          return resolve(true);
+        } catch (_) {}
+      }
+      try { if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut); } catch (_) {}
+      resolve(false);
+    });
+    proc.on("error", () => {
+      try { if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut); } catch (_) {}
+      resolve(false);
+    });
+  });
+}
+
 const server = http.createServer(async (req, res) => {
   const parsedUrl = new URL(req.url, `http://${req.headers.host}`);
 
@@ -754,9 +803,11 @@ const server = http.createServer(async (req, res) => {
             } else {
               await downloadFile(track.downloadUrl || track.streamUrl, masterAudioPath);
             }
-          }
-          if (track.attribution) {
-            fs.writeFileSync(finalAttrPath, track.attribution, "utf-8");
+            const ff = resolveFfmpegPath();
+            const embedded = ff ? await embedMp3MetadataWithFfmpeg(ff, masterAudioPath, track) : false;
+            if (!embedded && track.attribution) {
+              fs.writeFileSync(finalAttrPath, track.attribution, "utf-8");
+            }
           }
         }
 
@@ -892,5 +943,5 @@ function streamLocalFile(filePath, req, res) {
 server.listen(0, "127.0.0.1", () => {
   const port = server.address().port;
   // Emit JSON handshake line on stdout for parent CEP panel
-  console.log(JSON.stringify({ ok: true, port: port, version: "1.2.2" }));
+  console.log(JSON.stringify({ ok: true, port: port, version: "1.2.3" }));
 });

@@ -1,4 +1,4 @@
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -408,7 +408,7 @@ const runTests = async () => {
       fs.copyFileSync(localTarget, path.join(deepNested, "DeepTrack.mp3"));
       localSandbox.LocalLibraryProvider.setLibraryPath(deepRoot);
       const deepFound = await localSandbox.LocalLibraryProvider.scan({ forceRefresh: true });
-      if (deepFound.length !== 1 || deepFound[0].title !== "DeepTrack") {
+      if (deepFound.length !== 1 || !deepFound[0].localPath.endsWith("DeepTrack.mp3")) {
         fail("Unlimited-depth recursive scan failed at depth 9:", deepFound);
       }
       const sepDl = localSandbox.LocalLibraryProvider.getDownloadsPath();
@@ -418,6 +418,56 @@ const runTests = async () => {
       console.log("✓ Unlimited-depth recursion (9 levels) & separate Downloads folder verified!");
     } finally {
       try { fs.rmSync(deepRoot, { recursive: true, force: true }); } catch (_) {}
+    }
+
+    // Test 7d: Zero-sidecar embedded ID3v2 metadata reader in LocalLibraryProvider
+    const id3Dir = fs.mkdtempSync(path.join(os.tmpdir(), "ohmygramola-id3-"));
+    try {
+      const taggedMp3 = path.join(id3Dir, "EmbeddedSample.mp3");
+      const ffExe = "C:\\Program Files\\ffmpeg-8.0.1-full_build\\bin\\ffmpeg.exe";
+      if (fs.existsSync(ffExe)) {
+        const metaPayload = JSON.stringify({
+          title: "Embedded Hero",
+          artist: "Scott Buckley",
+          genre: "Cinematic",
+          bpm: "124",
+          duration: "03:42",
+          sourceName: "Scott Buckley",
+          licenseType: "CC BY 4.0",
+          webUrl: "https://www.scottbuckley.com.au/library/embedded-hero/",
+          attribution: "\"Embedded Hero\" by Scott Buckley (CC BY 4.0)",
+          safeForYouTube: true
+        });
+        const ffRes = spawnSync(ffExe, [
+          "-v", "error", "-y", "-i", localTarget, "-t", "2", "-c:a", "copy", "-id3v2_version", "3",
+          "-metadata", "title=Embedded Hero",
+          "-metadata", "artist=Scott Buckley",
+          "-metadata", "genre=Cinematic",
+          "-metadata", `OHMYGRAMOLA_META=${metaPayload}`,
+          taggedMp3
+        ], { windowsHide: true });
+        if (ffRes.status !== 0 || !fs.existsSync(taggedMp3)) {
+          fail("FFmpeg failed to create ID3v2 tagged MP3 for test");
+        }
+        localSandbox.LocalLibraryProvider.setLibraryPath(id3Dir);
+        const id3Tracks = await localSandbox.LocalLibraryProvider.scan({ forceRefresh: true });
+        if (
+          id3Tracks.length !== 1 ||
+          id3Tracks[0].title !== "Embedded Hero" ||
+          id3Tracks[0].artist !== "Scott Buckley" ||
+          id3Tracks[0].bpm !== "124" ||
+          id3Tracks[0].duration !== "03:42" ||
+          id3Tracks[0].licenseType !== "CC BY 4.0" ||
+          !id3Tracks[0].attribution.includes("Scott Buckley")
+        ) {
+          fail("LocalLibraryProvider failed to read embedded ID3v2 metadata without sidecars:", id3Tracks);
+        }
+        console.log("✓ Embedded ID3v2 MP3 metadata & attribution verified with zero sidecar files!");
+      } else {
+        console.log("ℹ Skipping ID3v2 FFmpeg tag test (ffmpeg.exe not found).");
+      }
+    } finally {
+      try { fs.rmSync(id3Dir, { recursive: true, force: true }); } catch (_) {}
     }
 
     // Test 8: Windows Native Clipboard Copy

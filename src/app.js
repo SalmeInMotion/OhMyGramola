@@ -6,7 +6,7 @@
 (function () {
   "use strict";
 
-  const APP_VERSION = "1.2.2";
+  const APP_VERSION = "1.2.3";
   window.OHMYGRAMOLA_VERSION = APP_VERSION;
 
   // Optically matched Play & Pause SVGs (exact same 15-unit vertical span y=4.5..19.5, zero OS emoji styling)

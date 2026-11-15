@@ -2,6 +2,12 @@
 
 All notable changes to **OhMyGramola** follow [Semantic Versioning](https://semver.org/).
 
+## [1.2.3] - 2026-11-15
+
+### Added
+- **Embedded MP3 ID3v2 Metadata & Attribution Reader/Writer**: `LocalLibraryProvider` now reads embedded ID3v2.3/2.4 tags (`TIT2`, `TPE1`, `TALB`, `TCON`, `TBPM`, `TCOP`, `WXXX`/`WOAS`, `COMM`, and `TXXX:OHMYGRAMOLA_META`) directly from the `.mp3` header (reading only the header bytes, with `.json` / `_attribution.txt` kept as legacy fallback).
+- **Zero-Clutter Online Downloads**: `broker.mjs` now embeds attribution and track metadata directly inside downloaded `.mp3` files via FFmpeg instead of creating extra `_attribution.txt` files when FFmpeg is present.
+
 ## [1.2.2] - 2026-11-15
 
 ### Fixed

@@ -80,6 +80,172 @@
     return fs.existsSync(targetPath);
   }
 
+  function decodeId3Text(buf, encoding) {
+    if (!buf || buf.length === 0) return "";
+    if (encoding === 0) return buf.toString("latin1").replace(/\0+$/, "");
+    if (encoding === 3) return buf.toString("utf8").replace(/\0+$/, "");
+    if (encoding === 1 || encoding === 2) {
+      let start = 0;
+      let isLe = encoding === 1;
+      if (buf.length >= 2) {
+        if (buf[0] === 0xff && buf[1] === 0xfe) { isLe = true; start = 2; }
+        else if (buf[0] === 0xfe && buf[1] === 0xff) { isLe = false; start = 2; }
+        else if (encoding === 2) { isLe = false; }
+      }
+      let slice = buf.slice(start);
+      if (!isLe) {
+        const swapped = slice.constructor.allocUnsafe(slice.length);
+        for (let i = 0; i + 1 < slice.length; i += 2) {
+          swapped[i] = slice[i + 1];
+          swapped[i + 1] = slice[i];
+        }
+        slice = swapped;
+      }
+      return slice.toString("utf16le").replace(/\0+$/, "");
+    }
+    return buf.toString("utf8").replace(/\0+$/, "");
+  }
+
+  function findNullTerminator(buf, offset, encoding) {
+    if (encoding === 1 || encoding === 2) {
+      for (let i = offset; i + 1 < buf.length; i += 2) {
+        if (buf[i] === 0 && buf[i + 1] === 0) return { end: i, next: i + 2 };
+      }
+      return { end: buf.length, next: buf.length };
+    }
+    for (let i = offset; i < buf.length; i++) {
+      if (buf[i] === 0) return { end: i, next: i + 1 };
+    }
+    return { end: buf.length, next: buf.length };
+  }
+
+  async function readMp3Id3Metadata(fs, filePath) {
+    try {
+      const Buf = typeof Buffer !== "undefined"
+        ? Buffer
+        : (typeof window !== "undefined" && window.cep_node && typeof window.cep_node.require === "function"
+          ? window.cep_node.require("buffer").Buffer
+          : (typeof require === "function" ? require("buffer").Buffer : null));
+      if (!Buf) return null;
+
+      let headerBuf;
+      if (fs.promises && typeof fs.promises.open === "function") {
+        const fh = await fs.promises.open(filePath, "r");
+        try {
+          const probe = Buf.alloc(10);
+          const { bytesRead } = await fh.read(probe, 0, 10, 0);
+          if (bytesRead < 10 || probe[0] !== 0x49 || probe[1] !== 0x44 || probe[2] !== 0x33) return null;
+          const ver = probe[3];
+          if (ver < 3 || ver > 4) return null;
+          const tagSize = ((probe[6] & 0x7f) << 21) | ((probe[7] & 0x7f) << 14) | ((probe[8] & 0x7f) << 7) | (probe[9] & 0x7f);
+          const toRead = Math.min(tagSize, 524288);
+          if (toRead <= 0) return null;
+          headerBuf = Buf.alloc(toRead);
+          const res = await fh.read(headerBuf, 0, toRead, 10);
+          headerBuf = headerBuf.slice(0, res.bytesRead);
+          headerBuf._id3Ver = ver;
+          headerBuf._flags = probe[5];
+        } finally {
+          await fh.close();
+        }
+      } else {
+        const fd = fs.openSync(filePath, "r");
+        try {
+          const probe = Buf.alloc(10);
+          const bytesRead = fs.readSync(fd, probe, 0, 10, 0);
+          if (bytesRead < 10 || probe[0] !== 0x49 || probe[1] !== 0x44 || probe[2] !== 0x33) return null;
+          const ver = probe[3];
+          if (ver < 3 || ver > 4) return null;
+          const tagSize = ((probe[6] & 0x7f) << 21) | ((probe[7] & 0x7f) << 14) | ((probe[8] & 0x7f) << 7) | (probe[9] & 0x7f);
+          const toRead = Math.min(tagSize, 524288);
+          if (toRead <= 0) return null;
+          headerBuf = Buf.alloc(toRead);
+          const r2 = fs.readSync(fd, headerBuf, 0, toRead, 10);
+          headerBuf = headerBuf.slice(0, r2);
+          headerBuf._id3Ver = ver;
+          headerBuf._flags = probe[5];
+        } finally {
+          fs.closeSync(fd);
+        }
+      }
+
+      const ver = headerBuf._id3Ver;
+      let offset = 0;
+      if ((headerBuf._flags & 0x40) && headerBuf.length >= 4) {
+        const extSize = ver === 4
+          ? ((headerBuf[0] & 0x7f) << 21) | ((headerBuf[1] & 0x7f) << 14) | ((headerBuf[2] & 0x7f) << 7) | (headerBuf[3] & 0x7f)
+          : headerBuf.readUInt32BE(0) + 4;
+        offset += Math.max(4, extSize);
+      }
+
+      const out = {};
+      while (offset + 10 <= headerBuf.length) {
+        if (headerBuf[offset] === 0) break;
+        const frameId = headerBuf.toString("latin1", offset, offset + 4);
+        if (!/^[A-Z0-9]{4}$/.test(frameId)) break;
+
+        const frameSize = ver === 4
+          ? ((headerBuf[offset + 4] & 0x7f) << 21) | ((headerBuf[offset + 5] & 0x7f) << 14) | ((headerBuf[offset + 6] & 0x7f) << 7) | (headerBuf[offset + 7] & 0x7f)
+          : headerBuf.readUInt32BE(offset + 4);
+        offset += 10;
+        if (frameSize <= 0 || offset + frameSize > headerBuf.length) break;
+
+        const payload = headerBuf.slice(offset, offset + frameSize);
+        offset += frameSize;
+
+        if (frameId === "TIT2" && payload.length > 1) {
+          out.title = decodeId3Text(payload.slice(1), payload[0]).trim();
+        } else if (frameId === "TPE1" && payload.length > 1) {
+          out.artist = decodeId3Text(payload.slice(1), payload[0]).trim();
+        } else if (frameId === "TALB" && payload.length > 1) {
+          out.album = decodeId3Text(payload.slice(1), payload[0]).trim();
+        } else if (frameId === "TCON" && payload.length > 1) {
+          out.genre = decodeId3Text(payload.slice(1), payload[0]).replace(/^\(\d+\)/, "").trim();
+        } else if (frameId === "TBPM" && payload.length > 1) {
+          out.bpm = decodeId3Text(payload.slice(1), payload[0]).trim();
+        } else if (frameId === "TCOP" && payload.length > 1) {
+          out.licenseType = decodeId3Text(payload.slice(1), payload[0]).trim();
+        } else if (frameId === "WOAS") {
+          out.webUrl = payload.toString("latin1").replace(/\0+$/, "").trim();
+        } else if (frameId === "WXXX" && payload.length > 2) {
+          const enc = payload[0];
+          const sep = findNullTerminator(payload, 1, enc);
+          const urlStr = payload.slice(sep.next).toString("latin1").replace(/\0+$/, "").trim();
+          if (urlStr && !out.webUrl) out.webUrl = urlStr;
+        } else if (frameId === "COMM" && payload.length > 4) {
+          const enc = payload[0];
+          const sep = findNullTerminator(payload, 4, enc);
+          const comment = decodeId3Text(payload.slice(sep.next), enc).trim();
+          if (comment && !out.attribution) out.attribution = comment;
+        } else if (frameId === "TXXX" && payload.length > 2) {
+          const enc = payload[0];
+          const sep = findNullTerminator(payload, 1, enc);
+          const desc = decodeId3Text(payload.slice(1, sep.end), enc).trim().toUpperCase();
+          const val = decodeId3Text(payload.slice(sep.next), enc).trim();
+          if (desc === "OHMYGRAMOLA_META" || desc === "OHMYGRAMOLA_JSON") {
+            try {
+              const parsed = JSON.parse(val);
+              Object.assign(out, parsed);
+            } catch (_) {}
+          } else if (desc === "OHMYGRAMOLA_ATTRIBUTION" || desc === "ATTRIBUTION") {
+            out.attribution = val;
+          } else if (desc === "OHMYGRAMOLA_SOURCE" || desc === "SOURCE" || desc === "SOURCENAME") {
+            out.sourceName = val;
+          } else if (desc === "OHMYGRAMOLA_DURATION" || desc === "DURATION") {
+            out.duration = val;
+          } else if (desc === "OHMYGRAMOLA_LICENSE" || desc === "LICENSE" || desc === "LICENSETYPE") {
+            out.licenseType = val;
+          } else if (desc === "OHMYGRAMOLA_WEBURL" || desc === "WEBURL") {
+            out.webUrl = val;
+          }
+        }
+      }
+      return Object.keys(out).length > 0 ? out : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   async function buildTrackEntry(fs, path, currentDir, relSegments, entryName) {
     const fullPath = path.join(currentDir, entryName);
     const ext = path.extname(entryName).toLowerCase();
@@ -105,7 +271,7 @@
       }
     }
 
-    // Check optional <baseName>.json metadata sidecar
+    // Check optional <baseName>.json metadata sidecar, or read embedded ID3v2 tags from .mp3
     let meta = null;
     const jsonSidecar = path.join(currentDir, `${baseName}.json`);
     if (await pathExistsAsync(fs, jsonSidecar)) {
@@ -115,19 +281,25 @@
       } catch (_) {}
     }
 
+    if (!meta && ext === ".mp3") {
+      meta = await readMp3Id3Metadata(fs, fullPath);
+    }
+
     if (meta && (meta.safeForYouTube === false || isUnsafeLicense(meta.licenseType) || isUnsafeLicense(meta.licenseUrl))) {
       return null;
     }
 
-    // Check optional <baseName>_attribution.txt sidecar
+    // Check optional <baseName>_attribution.txt sidecar if attribution not already embedded
     let attribution = (meta && meta.attribution) || `Local track from: ${fullPath}`;
     let webUrl = (meta && meta.webUrl) || null;
-    const attrFile = path.join(currentDir, `${baseName}_attribution.txt`);
-    if (await pathExistsAsync(fs, attrFile)) {
-      try {
-        const attrText = (await readTextAsync(fs, attrFile)).trim();
-        if (attrText) attribution = attrText;
-      } catch (_) {}
+    if (!meta || !meta.attribution) {
+      const attrFile = path.join(currentDir, `${baseName}_attribution.txt`);
+      if (await pathExistsAsync(fs, attrFile)) {
+        try {
+          const attrText = (await readTextAsync(fs, attrFile)).trim();
+          if (attrText) attribution = attrText;
+        } catch (_) {}
+      }
     }
 
     if (!webUrl && attribution) {
