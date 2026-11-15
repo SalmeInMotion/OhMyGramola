@@ -2,6 +2,15 @@
 
 All notable changes to **OhMyGramola** follow [Semantic Versioning](https://semver.org/).
 
+## [1.2.2] - 2026-11-15
+
+### Fixed
+- **Fixed `Open Folder` Button in Local Library**: Windows CEP `openURLInDefaultBrowser` silently ignored raw directory paths; local paths now launch `explorer.exe` directly (both in `BrokerClient.openExternal` and `/api/open`).
+- **Unlimited Recursive Depth**: Removed the 6-level depth cap in `LocalLibraryProvider` and added canonical `realpath` cycle protection so deeply nested folders are always discovered.
+
+### Added
+- **Separate Online Downloads Folder**: Added a configurable **Online Downloads Folder (AE Imports)** setting (`<LocalLibrary> Downloads` by default) so downloaded Kevin MacLeod & Jamendo tracks stay separate from your scanned Local Library without creating duplicates.
+
 ## [1.2.1] - 2026-11-15
 
 ### Added

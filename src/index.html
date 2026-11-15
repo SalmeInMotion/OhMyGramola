@@ -12,7 +12,7 @@
     <div class="brand">
       <span class="brand-badge">CC</span>
       <span class="brand-title">OhMyGramola</span>
-      <span id="app-version" class="version-pill" title="OhMyGramola Release Version">v1.2.1</span>
+      <span id="app-version" class="version-pill" title="OhMyGramola Release Version">v1.2.2</span>
     </div>
     <div class="topbar-actions">
       <button id="settings-btn" class="icon-btn" title="Settings / Paths">&#9881;</button>
@@ -86,12 +86,19 @@
   <div id="settings-modal" class="modal-overlay">
     <div class="modal-card">
       <div class="modal-header">
-        <h3>OhMyGramola Settings <span class="version-pill">v1.2.1</span></h3>
+        <h3>OhMyGramola Settings <span class="version-pill">v1.2.2</span></h3>
         <button id="close-settings-btn" class="icon-btn">✕</button>
       </div>
       <div class="form-group">
-        <label for="setting-local-path">Local Downloads Folder</label>
-        <input type="text" id="setting-local-path" class="form-input" placeholder="e.g. C:\Users\You\Music\OhMyGramola" />
+        <label for="setting-local-path">Local Library Folder (Recursive)</label>
+        <input type="text" id="setting-local-path" class="form-input" placeholder="e.g. P:\IA\RRSS\Music" />
+      </div>
+      <div class="form-group">
+        <label for="setting-downloads-path">Online Downloads Folder (AE Imports)</label>
+        <input type="text" id="setting-downloads-path" class="form-input" placeholder="e.g. P:\IA\RRSS\Music Downloads" />
+        <small style="color: var(--text-muted); font-size: 9px; margin-top: 2px;">
+          Kept separate from Local Library so downloaded Kevin MacLeod &amp; Jamendo tracks never duplicate.
+        </small>
       </div>
       <div class="form-group">
         <div class="label-row">

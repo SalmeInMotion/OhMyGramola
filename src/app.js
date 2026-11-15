@@ -6,7 +6,7 @@
 (function () {
   "use strict";
 
-  const APP_VERSION = "1.2.1";
+  const APP_VERSION = "1.2.2";
   window.OHMYGRAMOLA_VERSION = APP_VERSION;
 
   // Optically matched Play & Pause SVGs (exact same 15-unit vertical span y=4.5..19.5, zero OS emoji styling)
@@ -82,6 +82,7 @@
     modalJamendoPortalBtn: document.getElementById("modal-jamendo-portal-btn"),
     inputJamendoKey: document.getElementById("setting-jamendo-key"),
     inputLocalPath: document.getElementById("setting-local-path"),
+    inputDownloadsPath: document.getElementById("setting-downloads-path"),
     checkboxMergeOnline: document.getElementById("setting-merge-online")
   };
 
@@ -746,9 +747,9 @@
     try {
       let finalAudioPath = track.localPath;
 
-      // Download full master audio to local library only if not already on disk
+      // Download full master audio to dedicated Online Downloads folder if not already on disk
       if (!finalAudioPath) {
-        const targetDir = window.LocalLibraryProvider.getLibraryPath();
+        const targetDir = window.LocalLibraryProvider.getDownloadsPath();
         showToast(`Downloading full track to ${targetDir}...`);
 
         if (!window.BrokerClient) {
@@ -764,10 +765,6 @@
           targetDir: targetDir
         });
         finalAudioPath = importRes.masterPath || importRes.path;
-
-        if (window.LocalLibraryProvider && typeof window.LocalLibraryProvider.invalidateCache === "function") {
-          window.LocalLibraryProvider.invalidateCache();
-        }
       }
 
       // Copy attribution to clipboard for YouTube description
@@ -1061,6 +1058,9 @@
   elements.settingsBtn.addEventListener("click", () => {
     elements.inputJamendoKey.value = window.JamendoProvider.getClientId();
     elements.inputLocalPath.value = window.LocalLibraryProvider.getLibraryPath();
+    if (elements.inputDownloadsPath) {
+      elements.inputDownloadsPath.value = window.LocalLibraryProvider.getDownloadsPath();
+    }
     if (elements.checkboxMergeOnline) {
       elements.checkboxMergeOnline.checked = getMergeOnlinePreference();
     }
@@ -1074,6 +1074,9 @@
   elements.saveSettingsBtn.addEventListener("click", () => {
     window.JamendoProvider.setClientId(elements.inputJamendoKey.value);
     window.LocalLibraryProvider.setLibraryPath(elements.inputLocalPath.value);
+    if (elements.inputDownloadsPath) {
+      window.LocalLibraryProvider.setDownloadsPath(elements.inputDownloadsPath.value);
+    }
     if (elements.checkboxMergeOnline) {
       setMergeOnlinePreference(elements.checkboxMergeOnline.checked);
     }

@@ -216,12 +216,22 @@
         }
       }
 
-      const dirQueue = [{ dir: libraryDir, relSegments: [], depth: 0 }];
+      const dirQueue = [{ dir: libraryDir, relSegments: [] }];
+      const visitedRealPaths = new Set();
       let pendingBatch = [];
 
       while (dirQueue.length > 0) {
-        const { dir, relSegments, depth } = dirQueue.shift();
-        if (depth > 6) continue;
+        const { dir, relSegments } = dirQueue.shift();
+
+        // Guard against symlink/junction cycles while allowing unlimited recursion depth
+        try {
+          const realDir = (fs.promises && typeof fs.promises.realpath === "function")
+            ? await fs.promises.realpath(dir)
+            : fs.realpathSync(dir);
+          const normKey = realDir.toLowerCase();
+          if (visitedRealPaths.has(normKey)) continue;
+          visitedRealPaths.add(normKey);
+        } catch (_) {}
 
         let entries;
         try {
@@ -237,8 +247,7 @@
             if (!SKIP_DIRS.has(entry.name.toLowerCase())) {
               subDirs.push({
                 dir: path.join(dir, entry.name),
-                relSegments: relSegments.concat(entry.name),
-                depth: depth + 1
+                relSegments: relSegments.concat(entry.name)
               });
             }
             continue;
@@ -368,6 +377,22 @@
       try {
         localStorage.setItem("local_library_path", p.trim());
         cachedCatalog = null;
+        cachedAt = 0;
+      } catch (_) {}
+    },
+
+    getDownloadsPath() {
+      try {
+        const stored = localStorage.getItem("online_downloads_path");
+        if (stored && stored.trim()) return stored.trim();
+      } catch (_) {}
+      const libDir = this.getLibraryPath().replace(/[\\/]+$/, "");
+      return `${libDir} Downloads`;
+    },
+
+    setDownloadsPath(p) {
+      try {
+        localStorage.setItem("online_downloads_path", p.trim());
       } catch (_) {}
     },
 

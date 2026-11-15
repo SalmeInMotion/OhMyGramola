@@ -232,9 +232,10 @@
 
     async openExternal(target) {
       if (!target) return false;
+      const isHttpUrl = /^https?:\/\//i.test(target);
 
-      // 1. CEP openURLInDefaultBrowser (works for web links and file URLs)
-      if (typeof window !== "undefined" && window.cep && window.cep.util && typeof window.cep.util.openURLInDefaultBrowser === "function") {
+      // 1. CEP openURLInDefaultBrowser works reliably for http/https URLs (but NOT local folder paths on Windows)
+      if (isHttpUrl && typeof window !== "undefined" && window.cep && window.cep.util && typeof window.cep.util.openURLInDefaultBrowser === "function") {
         try {
           window.cep.util.openURLInDefaultBrowser(target);
           return true;
@@ -244,13 +245,31 @@
       // 2. Direct Node child_process if in CEP
       try {
         const cp = getNodeModule("child_process");
+        const fs = getNodeModule("fs");
         if (cp) {
-          cp.spawn("cmd.exe", ["/c", "start", "", target], { windowsHide: true });
+          if (!isHttpUrl) {
+            if (fs && !fs.existsSync(target)) {
+              try { fs.mkdirSync(target, { recursive: true }); } catch (_) {}
+            }
+            const child = cp.spawn("explorer.exe", [target], {
+              detached: true,
+              stdio: "ignore",
+              windowsHide: false
+            });
+            child.unref();
+            return true;
+          }
+          const child = cp.spawn("cmd.exe", ["/c", "start", "", target], {
+            detached: true,
+            stdio: "ignore",
+            windowsHide: true
+          });
+          child.unref();
           return true;
         }
       } catch (_) {}
 
-      // 3. Companion Broker endpoint
+      // 3. Companion Broker endpoint fallback
       await startBroker();
       if (brokerPort) {
         try {

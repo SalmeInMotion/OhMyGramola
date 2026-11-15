@@ -90,28 +90,54 @@ const runTests = async () => {
       fail("Streaming test failed, status:", streamRes.status);
     }
 
+    // Helper: find first real MP3 inside P:\IA\RRSS\Music
+    function findFirstMp3(dir) {
+      if (!fs.existsSync(dir)) return null;
+      const stack = [dir];
+      while (stack.length > 0) {
+        const cur = stack.pop();
+        for (const ent of fs.readdirSync(cur, { withFileTypes: true })) {
+          if (ent.name.startsWith(".") || ent.name.startsWith("_")) continue;
+          const full = path.join(cur, ent.name);
+          if (ent.isDirectory()) stack.push(full);
+          else if (ent.isFile() && ent.name.toLowerCase().endsWith(".mp3")) return full;
+        }
+      }
+      return null;
+    }
+
     // Test 3: Local file streaming with spaces & file:/// URI
     console.log("Testing Local Library file streaming with spaces & URL encoding...");
-    const localTarget = "P:\\IA\\RRSS\\Music\\Dentaneosuchus Hunt.mp3";
+    const localTarget = findFirstMp3("P:\\IA\\RRSS\\Music");
+    if (!localTarget) {
+      fail("No .mp3 file found inside P:\\IA\\RRSS\\Music for local streaming test");
+    }
     const localStreamRes = await fetch(`http://127.0.0.1:${port}/api/stream?url=${encodeURIComponent(localTarget)}&id=local-test`, {
       headers: { Range: "bytes=0-200" }
     });
 
     if (localStreamRes.status === 206 && localStreamRes.headers.get("content-type") === "audio/mpeg") {
-      console.log("✓ Local file streaming succeeded for P:\\IA\\RRSS\\Music\\Dentaneosuchus Hunt.mp3 with 206 Partial Content!");
+      console.log(`✓ Local file streaming succeeded for ${path.basename(localTarget)} with 206 Partial Content!`);
     } else {
       fail("Local streaming test failed, status:", localStreamRes.status);
     }
 
-    // Test 4: Local file streaming with encoded file:/// URI
-    const encodedFileUri = "file:///P:/IA/RRSS/Music/Capricerie%20No.%205%20(Bach,%20Paganini).mp3";
-    const fileUriRes = await fetch(`http://127.0.0.1:${port}/api/stream?url=${encodeURIComponent(encodedFileUri)}&id=local-uri-test`, {
-      headers: { Range: "bytes=0-100" }
-    });
-    if (fileUriRes.status === 206 && fileUriRes.headers.get("content-type") === "audio/mpeg") {
-      console.log("✓ Local file streaming succeeded for encoded file:/// URI with spaces and parenthesis!");
-    } else {
-      fail("Encoded file:/// streaming failed, status:", fileUriRes.status);
+    // Test 4: Local file streaming with encoded file:/// URI (spaces and parentheses)
+    const tempParenDir = fs.mkdtempSync(path.join(os.tmpdir(), "ohmygramola-uri-"));
+    try {
+      const parenMp3 = path.join(tempParenDir, "Test Track (Live, 2026).mp3");
+      fs.copyFileSync(localTarget, parenMp3);
+      const encodedFileUri = "file:///" + encodeURI(parenMp3.replace(/\\/g, "/"));
+      const fileUriRes = await fetch(`http://127.0.0.1:${port}/api/stream?url=${encodeURIComponent(encodedFileUri)}&id=local-uri-test`, {
+        headers: { Range: "bytes=0-100" }
+      });
+      if (fileUriRes.status === 206 && fileUriRes.headers.get("content-type") === "audio/mpeg") {
+        console.log("✓ Local file streaming succeeded for encoded file:/// URI with spaces and parentheses!");
+      } else {
+        fail("Encoded file:/// streaming failed, status:", fileUriRes.status);
+      }
+    } finally {
+      try { fs.rmSync(tempParenDir, { recursive: true, force: true }); } catch (_) {}
     }
 
     // Test 5: /api/waveform progressive/cached extraction on local MP3
@@ -337,12 +363,16 @@ const runTests = async () => {
     // Test 7b: LocalLibraryProvider progressive non-blocking scan on P:\IA\RRSS\Music
     console.log("Testing LocalLibraryProvider progressive scan & counter...");
     const localJsPath = path.resolve(__dirname, "../src/sources/local.js");
+    const localStorageMap = new Map();
     const localSandbox = {
       setTimeout,
       clearTimeout,
       console,
       cep_node: { require: requireFromTest },
-      localStorage: { getItem: () => null, setItem: () => {} }
+      localStorage: {
+        getItem: (k) => (localStorageMap.has(k) ? localStorageMap.get(k) : null),
+        setItem: (k, v) => localStorageMap.set(k, String(v))
+      }
     };
     localSandbox.window = localSandbox;
     vm.runInNewContext(fs.readFileSync(localJsPath, "utf-8"), localSandbox);
@@ -369,6 +399,26 @@ const runTests = async () => {
       });
     }
     console.log(`✓ LocalLibraryProvider progressive scan verified: ${scannedTracks.length} tracks in ${batchCalls} non-blocking batches!`);
+
+    // Test 7c: Unlimited-depth recursion & separate Online Downloads path
+    const deepRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ohmygramola-deep-"));
+    try {
+      const deepNested = path.join(deepRoot, "L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8", "L9");
+      fs.mkdirSync(deepNested, { recursive: true });
+      fs.copyFileSync(localTarget, path.join(deepNested, "DeepTrack.mp3"));
+      localSandbox.LocalLibraryProvider.setLibraryPath(deepRoot);
+      const deepFound = await localSandbox.LocalLibraryProvider.scan({ forceRefresh: true });
+      if (deepFound.length !== 1 || deepFound[0].title !== "DeepTrack") {
+        fail("Unlimited-depth recursive scan failed at depth 9:", deepFound);
+      }
+      const sepDl = localSandbox.LocalLibraryProvider.getDownloadsPath();
+      if (!sepDl || sepDl === deepRoot) {
+        fail("Downloads path should remain separate from Local Library path:", sepDl);
+      }
+      console.log("✓ Unlimited-depth recursion (9 levels) & separate Downloads folder verified!");
+    } finally {
+      try { fs.rmSync(deepRoot, { recursive: true, force: true }); } catch (_) {}
+    }
 
     // Test 8: Windows Native Clipboard Copy
     console.log("Testing Windows native clipboard copy through broker...");

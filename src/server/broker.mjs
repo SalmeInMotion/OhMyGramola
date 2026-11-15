@@ -1,5 +1,5 @@
 /**
- * OhMyGramola — Local Companion Broker (v1.2.1)
+ * OhMyGramola — Local Companion Broker (v1.2.2)
  * Runs as a standalone node.exe process outside AfterFX.exe to bypass Adobe outbound firewall blocks.
  * Provides live HTTP Range streaming, progressive waveform extraction, Jamendo API proxy, and master audio downloads.
  */
@@ -812,7 +812,25 @@ const server = http.createServer(async (req, res) => {
         const payload = JSON.parse(body);
         const target = (payload.target || "").trim();
         if (target) {
-          spawn("cmd.exe", ["/c", "start", "", target], { windowsHide: true });
+          const isHttpUrl = /^https?:\/\//i.test(target);
+          if (!isHttpUrl) {
+            if (!fs.existsSync(target)) {
+              try { fs.mkdirSync(target, { recursive: true }); } catch (_) {}
+            }
+            const child = spawn("explorer.exe", [target], {
+              detached: true,
+              stdio: "ignore",
+              windowsHide: false
+            });
+            child.unref();
+          } else {
+            const child = spawn("cmd.exe", ["/c", "start", "", target], {
+              detached: true,
+              stdio: "ignore",
+              windowsHide: true
+            });
+            child.unref();
+          }
         }
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true }));
@@ -874,5 +892,5 @@ function streamLocalFile(filePath, req, res) {
 server.listen(0, "127.0.0.1", () => {
   const port = server.address().port;
   // Emit JSON handshake line on stdout for parent CEP panel
-  console.log(JSON.stringify({ ok: true, port: port, version: "1.2.1" }));
+  console.log(JSON.stringify({ ok: true, port: port, version: "1.2.2" }));
 });
