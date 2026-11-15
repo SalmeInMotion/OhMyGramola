@@ -324,6 +324,8 @@
       finalTitle,
       finalArtist,
       finalGenre,
+      finalLicense,
+      (meta && meta.sourceName) || (relSegments[0] || ""),
       finalBpm !== "—" ? `${finalBpm} ${finalBpm}bpm` : "",
       relSegments.join(" "),
       tagsText,

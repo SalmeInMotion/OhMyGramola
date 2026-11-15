@@ -143,22 +143,34 @@
       return Object.values(genres).sort();
     },
 
-    async search({ query = "", genre = "", limit = 60 } = {}) {
+    async search({ query = "", genre = "", license = "", tags = [], limit = 60 } = {}) {
       const { pieces } = await loadCatalog();
-      const q = query.toLowerCase().trim();
+      const qTokens = [
+        ...String(query || "").toLowerCase().trim().split(/\s+/).filter(Boolean),
+        ...(Array.isArray(tags) ? tags.map((t) => String(t || "").toLowerCase().trim()).filter(Boolean) : [])
+      ];
       const g = genre.toLowerCase().trim();
 
       let results = pieces.filter((item) => {
+        if (global.LicenseGuide && typeof global.LicenseGuide.matchesTrackAllCriteria === "function") {
+          return global.LicenseGuide.matchesTrackAllCriteria(item, { query, genre, license, tags });
+        }
         if (g && item.genre.toLowerCase() !== g) {
           return false;
         }
-        if (q) {
-          const matchTitle = item.title.toLowerCase().includes(q);
-          const matchFeel = item.feel.toLowerCase().includes(q);
-          const matchInst = item.instruments.toLowerCase().includes(q);
-          const matchDesc = item.description.toLowerCase().includes(q);
-          if (!matchTitle && !matchFeel && !matchInst && !matchDesc) {
-            return false;
+        if (qTokens.length > 0) {
+          const blob = [
+            item.title,
+            item.artist,
+            item.genre,
+            item.feel,
+            item.instruments,
+            item.description,
+            item.licenseType,
+            item.bpm
+          ].join(" ").toLowerCase();
+          for (let i = 0; i < qTokens.length; i++) {
+            if (!blob.includes(qTokens[i])) return false;
           }
         }
         return true;

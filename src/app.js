@@ -6,7 +6,7 @@
 (function () {
   "use strict";
 
-  const APP_VERSION = "1.2.3";
+  const APP_VERSION = "1.3.0";
   window.OHMYGRAMOLA_VERSION = APP_VERSION;
 
   // Optically matched Play & Pause SVGs (exact same 15-unit vertical span y=4.5..19.5, zero OS emoji styling)
@@ -45,6 +45,8 @@
     activeSource: isMergedInit ? "online" : "incompetech", // "online" | "incompetech" | "jamendo" | "favorites" | "local"
     searchQuery: "",
     selectedGenre: "",
+    selectedLicense: "",
+    activeTags: [],
     tracks: [],
     loading: false,
     downloadingId: null,
@@ -53,12 +55,25 @@
 
   const elements = {
     tabsNav: document.getElementById("tabs-nav"),
+    licensesBtn: document.getElementById("licenses-btn"),
+    reloadLocalBtn: document.getElementById("reload-local-btn"),
     openFolderBtn: document.getElementById("open-folder-btn"),
     jamendoHelper: document.getElementById("jamendo-helper"),
     searchInput: document.getElementById("search-input"),
+    searchSuggestions: document.getElementById("search-suggestions"),
+    licenseSelect: document.getElementById("license-select"),
     genreSelect: document.getElementById("genre-select"),
+    activeFiltersBar: document.getElementById("active-filters-bar"),
     trackList: document.getElementById("track-list"),
     statusMessage: document.getElementById("status-message"),
+    trackContextMenu: document.getElementById("track-context-menu"),
+    // License modals
+    licenseCheckModal: document.getElementById("license-check-modal"),
+    closeLicenseCheckBtn: document.getElementById("close-license-check-btn"),
+    licenseCheckBody: document.getElementById("license-check-body"),
+    licensesGuideModal: document.getElementById("licenses-guide-modal"),
+    closeLicensesGuideBtn: document.getElementById("close-licenses-guide-btn"),
+    licensesGuideBody: document.getElementById("licenses-guide-body"),
     // Player & Waveform bar
     waveformCanvas: document.getElementById("waveform-canvas"),
     trimInBtn: document.getElementById("trim-in-btn"),
@@ -223,11 +238,312 @@
   }
 
   function updateFilterBar() {
-    if (state.activeSource === "local") {
-      if (elements.openFolderBtn) elements.openFolderBtn.style.display = "inline-flex";
-    } else {
-      if (elements.openFolderBtn) elements.openFolderBtn.style.display = "none";
+    const isLocal = state.activeSource === "local";
+    if (elements.openFolderBtn) elements.openFolderBtn.style.display = isLocal ? "inline-flex" : "none";
+    if (elements.reloadLocalBtn) elements.reloadLocalBtn.style.display = isLocal ? "inline-flex" : "none";
+  }
+
+  function escapeHtml(str) {
+    return String(str || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function populateLicenses() {
+    if (!elements.licenseSelect || !window.LicenseGuide) return;
+    const opts = window.LicenseGuide.getFilterOptions();
+    elements.licenseSelect.innerHTML = '<option value="">All Licenses</option>';
+    opts.forEach((optItem) => {
+      const opt = document.createElement("option");
+      opt.value = optItem.value;
+      opt.textContent = optItem.label;
+      elements.licenseSelect.appendChild(opt);
+    });
+    elements.licenseSelect.value = state.selectedLicense;
+  }
+
+  function renderActiveFiltersBar() {
+    if (!elements.activeFiltersBar) return;
+    const chips = [];
+
+    if (state.selectedLicense && window.LicenseGuide) {
+      const def = window.LicenseGuide.LICENSE_DEFS[state.selectedLicense];
+      const lbl = def ? def.shortLabel : state.selectedLicense;
+      chips.push({ kind: "license", value: state.selectedLicense, label: `License: ${lbl}` });
     }
+    if (state.selectedGenre) {
+      chips.push({ kind: "genre", value: state.selectedGenre, label: `Genre: ${state.selectedGenre}` });
+    }
+    state.activeTags.forEach((tag) => {
+      chips.push({ kind: "tag", value: tag, label: tag });
+    });
+
+    if (chips.length === 0) {
+      elements.activeFiltersBar.style.display = "none";
+      elements.activeFiltersBar.innerHTML = "";
+      return;
+    }
+
+    elements.activeFiltersBar.style.display = "flex";
+    elements.activeFiltersBar.innerHTML = `<span class="filter-and-label">AND:</span>`;
+
+    chips.forEach((chip) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "filter-chip";
+      btn.title = "Click to remove this filter";
+      btn.innerHTML = `<span>${escapeHtml(chip.label)}</span><span>✕</span>`;
+      btn.addEventListener("click", () => {
+        if (chip.kind === "license") {
+          state.selectedLicense = "";
+          if (elements.licenseSelect) elements.licenseSelect.value = "";
+        } else if (chip.kind === "genre") {
+          state.selectedGenre = "";
+          if (elements.genreSelect) elements.genreSelect.value = "";
+        } else if (chip.kind === "tag") {
+          state.activeTags = state.activeTags.filter((t) => t !== chip.value);
+        }
+        renderActiveFiltersBar();
+        loadCurrentSource();
+      });
+      elements.activeFiltersBar.appendChild(btn);
+    });
+
+    const clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    clearBtn.className = "filter-chip-clear";
+    clearBtn.textContent = "Clear all";
+    clearBtn.addEventListener("click", () => {
+      state.selectedLicense = "";
+      state.selectedGenre = "";
+      state.activeTags = [];
+      if (elements.licenseSelect) elements.licenseSelect.value = "";
+      if (elements.genreSelect) elements.genreSelect.value = "";
+      renderActiveFiltersBar();
+      loadCurrentSource();
+    });
+    elements.activeFiltersBar.appendChild(clearBtn);
+  }
+
+  function hideSearchSuggestions() {
+    if (elements.searchSuggestions) {
+      elements.searchSuggestions.style.display = "none";
+    }
+  }
+
+  function renderSearchSuggestions(filterText = "") {
+    if (!elements.searchSuggestions || !window.LicenseGuide) return;
+    const q = String(filterText || "").toLowerCase().trim();
+    const base = window.LicenseGuide.getSuggestedFilters();
+
+    // Include available genres from the dropdown as suggested categories too
+    const genreSuggestions = [];
+    if (elements.genreSelect && elements.genreSelect.style.display !== "none") {
+      Array.from(elements.genreSelect.options).forEach((opt) => {
+        if (opt.value) {
+          genreSuggestions.push({ type: "genre", value: opt.value, label: `Genre: ${opt.value}`, group: "Genre" });
+        }
+      });
+    }
+
+    const combined = [...base, ...genreSuggestions].filter((item) => {
+      if (item.type === "tag" && state.activeTags.includes(item.value.toLowerCase())) return false;
+      if (item.type === "license" && state.selectedLicense === item.value) return false;
+      if (item.type === "genre" && state.selectedGenre === item.value) return false;
+      if (!q) return true;
+      return item.label.toLowerCase().includes(q) || item.value.toLowerCase().includes(q) || item.group.toLowerCase().includes(q);
+    }).slice(0, 14);
+
+    if (combined.length === 0) {
+      hideSearchSuggestions();
+      return;
+    }
+
+    elements.searchSuggestions.innerHTML = "";
+    let lastGroup = "";
+    combined.forEach((item) => {
+      if (item.group !== lastGroup) {
+        lastGroup = item.group;
+        const grp = document.createElement("div");
+        grp.className = "suggestion-group-label";
+        grp.textContent = item.group;
+        elements.searchSuggestions.appendChild(grp);
+      }
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "suggestion-item";
+      btn.innerHTML = `<span>${escapeHtml(item.label)}</span><span class="suggestion-hint">+ AND filter</span>`;
+      btn.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        if (item.type === "license") {
+          state.selectedLicense = item.value;
+          if (elements.licenseSelect) elements.licenseSelect.value = item.value;
+        } else if (item.type === "genre") {
+          state.selectedGenre = item.value;
+          if (elements.genreSelect) elements.genreSelect.value = item.value;
+        } else {
+          const val = item.value.toLowerCase();
+          if (!state.activeTags.includes(val)) {
+            state.activeTags.push(val);
+          }
+        }
+        if (elements.searchInput && q && (item.value.toLowerCase().includes(q) || item.label.toLowerCase().includes(q))) {
+          elements.searchInput.value = "";
+          state.searchQuery = "";
+        }
+        hideSearchSuggestions();
+        renderActiveFiltersBar();
+        loadCurrentSource();
+      });
+      elements.searchSuggestions.appendChild(btn);
+    });
+    elements.searchSuggestions.style.display = "flex";
+  }
+
+  function openCheckLicenseModal(track) {
+    if (!elements.licenseCheckModal || !elements.licenseCheckBody || !window.LicenseGuide) return;
+    const info = window.LicenseGuide.explainTrackLicense(track);
+    const toneClass = `tone-${info.tone || "neutral"}`;
+    const attrBoxHtml = info.attributionText
+      ? `
+        <div class="license-attr-box">${escapeHtml(info.attributionText)}</div>
+        <div style="display:flex; justify-content:flex-end; margin-top:4px;">
+          <button type="button" class="btn-sm btn-copy js-modal-copy-attr">Copy Attribution</button>
+        </div>
+      `
+      : "";
+
+    elements.licenseCheckBody.innerHTML = `
+      <div class="license-track-header">
+        <div class="license-track-title">${escapeHtml(info.title)}</div>
+        <div class="license-track-artist">${escapeHtml(info.artist)}</div>
+      </div>
+      <span class="license-pill ${toneClass}">${escapeHtml(info.rawLicense)} — ${escapeHtml(info.label)}</span>
+      <div class="license-summary">${escapeHtml(info.summary)}</div>
+      <div class="license-section">
+        <div class="license-section-title">What You Can Do</div>
+        <ul class="license-list can">
+          ${info.canDo.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}
+        </ul>
+      </div>
+      <div class="license-section">
+        <div class="license-section-title">Rules &amp; Limitations</div>
+        <ul class="license-list cannot">
+          ${info.cannotDo.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}
+        </ul>
+      </div>
+      <div class="license-section">
+        <div class="license-section-title">How to Credit / Attribute</div>
+        <div style="font-size:10.5px; color:var(--text-main); line-height:1.35;">${escapeHtml(info.howToAttribute)}</div>
+        ${attrBoxHtml}
+      </div>
+    `;
+
+    const copyBtn = elements.licenseCheckBody.querySelector(".js-modal-copy-attr");
+    if (copyBtn) {
+      copyBtn.addEventListener("click", async () => {
+        const ok = await copyToClipboard(info.attributionText);
+        if (ok) showToast("✓ Attribution copied to clipboard");
+      });
+    }
+
+    elements.licenseCheckModal.classList.add("open");
+  }
+
+  function openLicensesGuideModal() {
+    if (!elements.licensesGuideModal || !elements.licensesGuideBody || !window.LicenseGuide) return;
+    const all = window.LicenseGuide.getAllLicensesOverview();
+
+    elements.licensesGuideBody.innerHTML = `
+      <div class="license-summary">
+        <strong>Are all tracks the same license?</strong> No — OhMyGramola mixes multiple YouTube-safe licenses across Kevin MacLeod, Jamendo, and your Local Library. Use the <strong>License filter</strong> in the search bar to isolate any specific license (and combine it with tags like <em>drums</em> using <strong>AND</strong> filtering).
+      </div>
+      <div class="license-section">
+        <div class="license-section-title">Automatic YouTube Safety Filter</div>
+        <div style="font-size:10.5px; color:var(--text-main); line-height:1.35;">
+          Tracks with <strong>-NC (NonCommercial)</strong> or <strong>-ND (NoDerivatives)</strong> clauses are automatically excluded because they block YouTube monetization and video syncing.
+        </div>
+      </div>
+      ${all.map((lic) => `
+        <div class="license-guide-card">
+          <span class="license-pill tone-${lic.tone}">${escapeHtml(lic.label)}</span>
+          <div style="font-size:10.5px; color:var(--text-main); line-height:1.35;">${escapeHtml(lic.summary)}</div>
+          <div class="license-guide-examples"><strong>Where seen:</strong> ${escapeHtml(lic.examples)}</div>
+          <div style="font-size:10px; color:var(--text-muted);"><strong>Credit rule:</strong> ${escapeHtml(lic.howToAttribute)}</div>
+        </div>
+      `).join("")}
+    `;
+
+    elements.licensesGuideModal.classList.add("open");
+  }
+
+  function hideTrackContextMenu() {
+    if (elements.trackContextMenu) {
+      elements.trackContextMenu.style.display = "none";
+      elements.trackContextMenu.innerHTML = "";
+    }
+  }
+
+  function showTrackContextMenu(e, track) {
+    if (!elements.trackContextMenu || !track) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const menu = elements.trackContextMenu;
+    menu.innerHTML = "";
+    const isLocal = track.source === "local" || Boolean(track.localPath);
+
+    const addItem = (label, shortcut, onClick) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "context-menu-item";
+      btn.innerHTML = `<span>${escapeHtml(label)}</span>${shortcut ? `<span class="context-menu-shortcut">${escapeHtml(shortcut)}</span>` : ""}`;
+      btn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        hideTrackContextMenu();
+        onClick();
+      });
+      menu.appendChild(btn);
+    };
+
+    const addDivider = () => {
+      const div = document.createElement("div");
+      div.className = "context-menu-divider";
+      menu.appendChild(div);
+    };
+
+    if (isLocal && track.localPath) {
+      addItem("📋 Copy Path", "Shift+MidClick", async () => {
+        const ok = await copyToClipboard(track.localPath);
+        if (ok) showToast("✓ File path copied to clipboard");
+      });
+      addItem("📂 Open Folder", "", () => {
+        if (window.BrokerClient && typeof window.BrokerClient.openExternal === "function") {
+          window.BrokerClient.openExternal(track.localPath);
+        }
+      });
+      addDivider();
+    } else if (track.webUrl) {
+      addItem("↗ Open Link", "", () => {
+        if (window.BrokerClient && typeof window.BrokerClient.openExternal === "function") {
+          window.BrokerClient.openExternal(track.webUrl);
+        }
+      });
+      addDivider();
+    }
+
+    addItem("⚖ Check License", "", () => {
+      openCheckLicenseModal(track);
+    });
+
+    menu.style.display = "flex";
+    const rect = menu.getBoundingClientRect();
+    const maxLeft = Math.max(4, window.innerWidth - rect.width - 6);
+    const maxTop = Math.max(4, window.innerHeight - rect.height - 6);
+    menu.style.left = `${Math.min(e.clientX, maxLeft)}px`;
+    menu.style.top = `${Math.min(e.clientY, maxTop)}px`;
   }
 
   function renderJamendoHelper() {
@@ -399,7 +715,6 @@
       }
 
       btn.addEventListener("click", () => {
-        const switchedToLocal = state.activeSource !== "local" && tab.id === "local";
         if (state.activeSource !== tab.id) {
           state.selectedGenre = "";
         }
@@ -408,7 +723,8 @@
         updateFilterBar();
         renderJamendoHelper();
         populateGenres();
-        loadCurrentSource({ forceLocalRefresh: switchedToLocal });
+        renderActiveFiltersBar();
+        loadCurrentSource({ forceLocalRefresh: false });
       });
 
       elements.tabsNav.appendChild(btn);
@@ -485,6 +801,19 @@
       return;
     }
 
+    const combinedQuery = [state.searchQuery, ...state.activeTags].filter(Boolean).join(" ").trim();
+    const filterTrack = (t) => {
+      if (window.LicenseGuide && typeof window.LicenseGuide.matchesTrackAllCriteria === "function") {
+        return window.LicenseGuide.matchesTrackAllCriteria(t, {
+          query: state.searchQuery,
+          genre: state.selectedGenre,
+          license: state.selectedLicense,
+          tags: state.activeTags
+        });
+      }
+      return true;
+    };
+
     if (state.activeSource === "local" && window.LocalLibraryProvider && typeof window.LocalLibraryProvider.scanProgressive === "function") {
       state.loading = true;
       state.tracks = [];
@@ -495,7 +824,7 @@
         : "Scanning local library...");
 
       const handle = window.LocalLibraryProvider.scanProgressive({
-        query: state.searchQuery,
+        query: combinedQuery,
         genre: state.selectedGenre,
         forceRefresh: forceLocalRefresh,
         onBatch({ newMatches, totalDetected, genres, done }) {
@@ -504,9 +833,14 @@
           updateLocalTabCounter(totalDetected, !done);
           applyLocalGenresIncremental(genres);
 
-          if (newMatches && newMatches.length > 0) {
-            state.tracks.push(...newMatches);
-            appendTrackCards(newMatches);
+          const filteredBatch = (newMatches || []).filter((t) => {
+            if (!state.selectedLicense || !window.LicenseGuide) return true;
+            return window.LicenseGuide.matchesLicenseFilter(t, state.selectedLicense);
+          });
+
+          if (filteredBatch.length > 0) {
+            state.tracks.push(...filteredBatch);
+            appendTrackCards(filteredBatch);
           }
 
           if (!done) {
@@ -540,28 +874,37 @@
       if (state.activeSource === "incompetech") {
         results = await window.IncompetechProvider.search({
           query: state.searchQuery,
-          genre: state.selectedGenre
+          genre: state.selectedGenre,
+          license: state.selectedLicense,
+          tags: state.activeTags
         });
       } else if (state.activeSource === "local") {
         results = await window.LocalLibraryProvider.scan({
-          query: state.searchQuery,
+          query: combinedQuery,
           genre: state.selectedGenre
         });
+        results = results.filter(filterTrack);
       } else if (state.activeSource === "favorites") {
         results = await window.FavoritesManager.search({
-          query: state.searchQuery,
+          query: combinedQuery,
           genre: state.selectedGenre
         });
+        results = results.filter(filterTrack);
       } else if (state.activeSource === "jamendo") {
+        const jamTags = [state.selectedGenre, ...state.activeTags].filter(Boolean).join(" ");
         results = await window.JamendoProvider.search({
           query: state.searchQuery,
-          tags: state.selectedGenre
+          tags: jamTags
         });
+        results = results.filter(filterTrack);
       } else if (state.activeSource === "online") {
+        const jamTags = [state.selectedGenre, ...state.activeTags].filter(Boolean).join(" ");
         const queries = [
           window.IncompetechProvider.search({
             query: state.searchQuery,
             genre: state.selectedGenre,
+            license: state.selectedLicense,
+            tags: state.activeTags,
             limit: 40
           })
         ];
@@ -569,14 +912,14 @@
           queries.push(
             window.JamendoProvider.search({
               query: state.searchQuery,
-              tags: state.selectedGenre
+              tags: jamTags
             })
           );
         }
 
         const settled = await Promise.allSettled(queries);
         const incTracks = settled[0] && settled[0].status === "fulfilled" ? settled[0].value : [];
-        const jamTracks = settled[1] && settled[1].status === "fulfilled" ? settled[1].value : [];
+        const jamTracks = (settled[1] && settled[1].status === "fulfilled" ? settled[1].value : []).filter(filterTrack);
 
         const merged = [];
         const max = Math.max(incTracks.length, jamTracks.length);
@@ -702,6 +1045,27 @@
 
     card.querySelector(".btn-import").addEventListener("click", () => {
       handleDownloadAndImport(track);
+    });
+
+    card.addEventListener("contextmenu", (e) => {
+      showTrackContextMenu(e, track);
+    });
+
+    // Shift + Middle Click copies local file path (for local tracks)
+    card.addEventListener("mousedown", (e) => {
+      if (e.button === 1 && e.shiftKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (track.localPath) {
+          copyToClipboard(track.localPath).then((ok) => {
+            if (ok) showToast("✓ File path copied to clipboard");
+          });
+        } else if (track.webUrl) {
+          copyToClipboard(track.webUrl).then((ok) => {
+            if (ok) showToast("✓ Track link copied to clipboard");
+          });
+        }
+      }
     });
 
     return card;
@@ -906,6 +1270,66 @@
     });
   }
 
+  // Suppress native browser right-click menu globally (Back/Forward/Print/View Source)
+  window.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    if (!e.target.closest || !e.target.closest(".track-card")) {
+      hideTrackContextMenu();
+    }
+  });
+
+  document.addEventListener("click", (e) => {
+    if (elements.trackContextMenu && !elements.trackContextMenu.contains(e.target)) {
+      hideTrackContextMenu();
+    }
+    if (elements.searchSuggestions && e.target !== elements.searchInput && !elements.searchSuggestions.contains(e.target)) {
+      hideSearchSuggestions();
+    }
+  });
+
+  if (elements.licensesBtn) {
+    elements.licensesBtn.addEventListener("click", () => {
+      openLicensesGuideModal();
+    });
+  }
+
+  if (elements.closeLicenseCheckBtn) {
+    elements.closeLicenseCheckBtn.addEventListener("click", () => {
+      elements.licenseCheckModal.classList.remove("open");
+    });
+  }
+
+  if (elements.licenseCheckModal) {
+    elements.licenseCheckModal.addEventListener("click", (e) => {
+      if (e.target === elements.licenseCheckModal) {
+        elements.licenseCheckModal.classList.remove("open");
+      }
+    });
+  }
+
+  if (elements.closeLicensesGuideBtn) {
+    elements.closeLicensesGuideBtn.addEventListener("click", () => {
+      elements.licensesGuideModal.classList.remove("open");
+    });
+  }
+
+  if (elements.licensesGuideModal) {
+    elements.licensesGuideModal.addEventListener("click", (e) => {
+      if (e.target === elements.licensesGuideModal) {
+        elements.licensesGuideModal.classList.remove("open");
+      }
+    });
+  }
+
+  if (elements.reloadLocalBtn) {
+    elements.reloadLocalBtn.addEventListener("click", () => {
+      if (state.activeSource === "local") {
+        showToast("Rescanning Local Library...");
+        loadCurrentSource({ forceLocalRefresh: true });
+      }
+    });
+  }
+
   // Open Folder Button Click Event
   if (elements.openFolderBtn) {
     elements.openFolderBtn.addEventListener("click", () => {
@@ -920,17 +1344,32 @@
 
   // Search & Filter Inputs
   let searchDebounce = null;
+  elements.searchInput.addEventListener("focus", () => {
+    renderSearchSuggestions(elements.searchInput.value);
+  });
+
   elements.searchInput.addEventListener("input", (e) => {
     state.searchQuery = e.target.value;
+    renderSearchSuggestions(state.searchQuery);
     clearTimeout(searchDebounce);
     searchDebounce = setTimeout(() => {
       loadCurrentSource();
     }, 250);
   });
 
+  if (elements.licenseSelect) {
+    elements.licenseSelect.addEventListener("change", (e) => {
+      state.selectedLicense = e.target.value;
+      elements.licenseSelect.blur();
+      renderActiveFiltersBar();
+      loadCurrentSource();
+    });
+  }
+
   elements.genreSelect.addEventListener("change", (e) => {
     state.selectedGenre = e.target.value;
     elements.genreSelect.blur();
+    renderActiveFiltersBar();
     loadCurrentSource();
   });
 
@@ -949,10 +1388,25 @@
 
   // Global Keyboard Shortcuts when focus is in OhMyGramola
   window.addEventListener("keydown", (e) => {
-    if (elements.settingsModal && elements.settingsModal.classList.contains("open")) {
-      if (e.key === "Escape") {
-        elements.settingsModal.classList.remove("open");
+    if (e.key === "Escape") {
+      hideTrackContextMenu();
+      hideSearchSuggestions();
+      if (elements.licenseCheckModal && elements.licenseCheckModal.classList.contains("open")) {
+        elements.licenseCheckModal.classList.remove("open");
+        return;
       }
+      if (elements.licensesGuideModal && elements.licensesGuideModal.classList.contains("open")) {
+        elements.licensesGuideModal.classList.remove("open");
+        return;
+      }
+      if (elements.settingsModal && elements.settingsModal.classList.contains("open")) {
+        elements.settingsModal.classList.remove("open");
+        return;
+      }
+    }
+    if ((elements.settingsModal && elements.settingsModal.classList.contains("open")) ||
+        (elements.licenseCheckModal && elements.licenseCheckModal.classList.contains("open")) ||
+        (elements.licensesGuideModal && elements.licensesGuideModal.classList.contains("open"))) {
       return;
     }
 
@@ -1089,22 +1543,17 @@
     loadCurrentSource();
   });
 
-  // Initial Boot
+  // Initial Boot (Local Library is NOT scanned until user explicitly clicks its tab)
   updateMainPlayPauseIcon(false);
   updateNowPlayingFavoriteUI();
   updateTrimToolbarUI();
   renderTabs();
   updateFilterBar();
   renderJamendoHelper();
+  populateLicenses();
   populateGenres();
+  renderActiveFiltersBar();
   setTimeout(() => {
     loadCurrentSource();
   }, 200);
-  setTimeout(() => {
-    if (window.LocalLibraryProvider && typeof window.LocalLibraryProvider.warmUp === "function") {
-      window.LocalLibraryProvider.warmUp((count, done) => {
-        updateLocalTabCounter(count, !done);
-      });
-    }
-  }, 450);
 })();

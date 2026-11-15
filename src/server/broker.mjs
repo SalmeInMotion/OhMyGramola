@@ -1,5 +1,5 @@
 /**
- * OhMyGramola — Local Companion Broker (v1.2.3)
+ * OhMyGramola — Local Companion Broker (v1.3.0)
  * Runs as a standalone node.exe process outside AfterFX.exe to bypass Adobe outbound firewall blocks.
  * Provides live HTTP Range streaming, progressive waveform extraction, Jamendo API proxy, and master audio downloads.
  */
@@ -865,10 +865,25 @@ const server = http.createServer(async (req, res) => {
         if (target) {
           const isHttpUrl = /^https?:\/\//i.test(target);
           if (!isHttpUrl) {
-            if (!fs.existsSync(target)) {
-              try { fs.mkdirSync(target, { recursive: true }); } catch (_) {}
+            let explorerArgs = [target];
+            if (fs.existsSync(target)) {
+              try {
+                if (fs.statSync(target).isFile()) {
+                  explorerArgs = [`/select,${target}`];
+                }
+              } catch (_) {}
+            } else {
+              const hasExt = /\.[a-z0-9]{2,5}$/i.test(target);
+              if (hasExt) {
+                const parentDir = path.dirname(target);
+                if (fs.existsSync(parentDir)) {
+                  explorerArgs = [parentDir];
+                }
+              } else {
+                try { fs.mkdirSync(target, { recursive: true }); } catch (_) {}
+              }
             }
-            const child = spawn("explorer.exe", [target], {
+            const child = spawn("explorer.exe", explorerArgs, {
               detached: true,
               stdio: "ignore",
               windowsHide: false

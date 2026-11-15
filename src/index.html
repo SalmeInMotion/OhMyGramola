@@ -12,30 +12,41 @@
     <div class="brand">
       <span class="brand-badge">CC</span>
       <span class="brand-title">OhMyGramola</span>
-      <span id="app-version" class="version-pill" title="OhMyGramola Release Version">v1.2.3</span>
+      <span id="app-version" class="version-pill" title="OhMyGramola Release Version">v1.3.0</span>
     </div>
     <div class="topbar-actions">
       <button id="settings-btn" class="icon-btn" title="Settings / Paths">&#9881;</button>
     </div>
   </header>
 
-  <!-- Sources Navigation Tabs -->
-  <nav class="tabs-nav" id="tabs-nav">
-    <button class="tab-btn active" data-source="incompetech">Kevin MacLeod (1,400+)</button>
-    <button class="tab-btn" data-source="jamendo">Jamendo Music</button>
-    <button class="tab-btn" data-source="local">Local Library (P:\IA\RRSS\Music)</button>
-  </nav>
+  <!-- Sources Navigation Tabs + Licenses Guide Button -->
+  <div class="tabs-bar">
+    <nav class="tabs-nav" id="tabs-nav">
+      <button class="tab-btn active" data-source="incompetech">Kevin MacLeod (1,400+)</button>
+      <button class="tab-btn" data-source="jamendo">Jamendo Music</button>
+      <button class="tab-btn" data-source="local">Local Library</button>
+    </nav>
+    <button type="button" id="licenses-btn" class="licenses-tab-btn" title="View License Guide & YouTube Monetization Rules">⚖ Licenses</button>
+  </div>
 
   <!-- Search & Filter Controls -->
   <div class="filter-bar">
     <div class="search-input-wrap">
-      <input type="text" id="search-input" class="search-input" placeholder="Search by title, feel, instrument, keyword..." />
+      <input type="text" id="search-input" class="search-input" placeholder="Search or pick tags (e.g. drums, cc-by)..." autocomplete="off" />
+      <div id="search-suggestions" class="search-suggestions" style="display: none;"></div>
     </div>
-    <select id="genre-select" class="genre-select">
+    <select id="license-select" class="genre-select license-select" title="Filter by License Type (AND)">
+      <option value="">All Licenses</option>
+    </select>
+    <select id="genre-select" class="genre-select" title="Filter by Genre / Category (AND)">
       <option value="">All Genres</option>
     </select>
-    <button id="open-folder-btn" class="btn-sm btn-open-folder" title="Open local music directory in Windows File Explorer" style="display: none;">📂 Open Folder</button>
+    <button type="button" id="reload-local-btn" class="btn-sm btn-open-folder" title="Rescan Local Library folder" style="display: none;">↻ Reload</button>
+    <button type="button" id="open-folder-btn" class="btn-sm btn-open-folder" title="Open local music directory in Windows File Explorer" style="display: none;">📂 Folder</button>
   </div>
+
+  <!-- Active Exclusive (AND) Filter Chips & Quick Suggestions -->
+  <div id="active-filters-bar" class="active-filters-bar" style="display: none;"></div>
 
   <!-- Track List -->
   <main class="main-content">
@@ -86,7 +97,7 @@
   <div id="settings-modal" class="modal-overlay">
     <div class="modal-card">
       <div class="modal-header">
-        <h3>OhMyGramola Settings <span class="version-pill">v1.2.3</span></h3>
+        <h3>OhMyGramola Settings <span class="version-pill">v1.3.0</span></h3>
         <button id="close-settings-btn" class="icon-btn">✕</button>
       </div>
       <div class="form-group">
@@ -125,12 +136,38 @@
     </div>
   </div>
 
+  <!-- Custom Track Context Menu -->
+  <div id="track-context-menu" class="context-menu" role="menu" style="display: none;"></div>
+
+  <!-- Per-Track Check License Modal -->
+  <div id="license-check-modal" class="modal-overlay">
+    <div class="modal-card modal-card-wide">
+      <div class="modal-header">
+        <h3>Track License Check</h3>
+        <button type="button" id="close-license-check-btn" class="icon-btn">✕</button>
+      </div>
+      <div id="license-check-body" class="license-modal-body"></div>
+    </div>
+  </div>
+
+  <!-- All Licenses Guide Modal -->
+  <div id="licenses-guide-modal" class="modal-overlay">
+    <div class="modal-card modal-card-wide">
+      <div class="modal-header">
+        <h3>Music Licenses Guide (YouTube &amp; Client Safe)</h3>
+        <button type="button" id="close-licenses-guide-btn" class="icon-btn">✕</button>
+      </div>
+      <div id="licenses-guide-body" class="license-modal-body"></div>
+    </div>
+  </div>
+
   <!-- Script Modules -->
   <script src="./broker-client.js"></script>
   <script src="./net.js"></script>
   <script src="./ae-bridge.js"></script>
   <script src="./player.js"></script>
   <script src="./waveform.js"></script>
+  <script src="./licenses.js"></script>
   <script src="./sources/incompetech.js"></script>
   <script src="./sources/jamendo.js"></script>
   <script src="./sources/local.js"></script>

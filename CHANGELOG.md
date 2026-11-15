@@ -2,6 +2,18 @@
 
 All notable changes to **OhMyGramola** follow [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] - 2026-11-15
+
+### Added
+- **Custom Right-Click Context Menu**: Replaced the default CEF browser context menu (Back/Forward/Print/View Source) with a dark-themed track context menu:
+  - **Local tracks**: `Copy Path` (also triggered via **Shift + Middle Click**), `Open Folder` (selects the file in Windows Explorer via `/select,`), and `Check License`.
+  - **Online tracks**: `Open Link` and `Check License`.
+- **Dummy-Proof License Popups**:
+  - **Per-Track `Check License`**: Explains in plain English what you can/cannot do and provides ready-to-copy attribution when required.
+  - **`Licenses` Guide Button**: Added next to the library tabs to explain all mixed licenses (`CC0`, `Royalty-Free No Attribution`, `CC BY`, `Royalty-Free Attribution`, `CC BY-SA`, `Local / Pre-verified`) and YouTube `-NC`/`-ND` safety filtering.
+- **Exclusive Multi-Filter (`AND`) Categories & Search Suggestions**: Added a License filter dropdown, clickable search suggestions (licenses, genres, instruments, moods), and active `AND` filter chips so combining e.g. `License: CC BY` + `drums` strictly requires every condition to match.
+- **Lazy Local Library Loading & `Reload` Button**: Local Library no longer scans automatically on startup; scanning begins only when clicking the `Local Library` tab or pressing the new `↻ Reload` button.
+
 ## [1.2.3] - 2026-11-15
 
 ### Added
